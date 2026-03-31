@@ -1037,6 +1037,16 @@ sub f1200_register_pretty {
         my $mode = $value == 1 ? '200W' : ($value == 2 ? '400W' : sprintf('unknown (0x%02X)', $value));
         return sprintf('Input power mode: %s (raw=%d)', $mode, $value);
     }
+    # 0x000C appears to be the energy-management discharge floor in percent.
+    # Observed app setting of 10%% maps to raw=9 in capture (possible +1 UI offset).
+    if ($reg == 0x000C) {
+        return sprintf('Energy mgmt discharge limit (est): %d %% (raw=%d)', $value, $value);
+    }
+    # 0x000E appears to be EPS AC charging limit in 0.1%% units.
+    # Observed 100%% as raw=1000.
+    if ($reg == 0x000E) {
+        return sprintf('EPS AC charge limit (est): %.1f %% (raw=%d)', $value / 10.0, $value);
+    }
 
     # 0x000F is the rear LED brightness/mode. Observed: 0 = off, 10 (0x0A) = on.
     if ($reg == 0x000F) {
@@ -1076,6 +1086,14 @@ sub f1200_register_pretty {
         my $mins = int($value / 60);
         my $secs = $value % 60;
         return sprintf('Screen shutdown timeout: %dm %02ds (%d sec, raw=%d)', $mins, $secs, $value, $value);
+    }
+    # 0x0042 appears to be max discharge limit in 0.1% units (provisional).
+    if ($reg == 0x0042) {
+        return sprintf('Max discharge limit (est): %.1f %% (raw=%d)', $value / 10.0, $value);
+    }
+    # 0x0043 appears to mirror EPS AC charging limit in 0.1%% units.
+    if ($reg == 0x0043) {
+        return sprintf('EPS AC charge limit [b] (est): %.1f %% (raw=%d)', $value / 10.0, $value);
     }
     # 0x003B is time remaining in minutes. Without load: ~4496 units = 3d 2h 56m.
     # With load, decreases proportionally. Jitters ±60 min due to AC ripple/estimation.
