@@ -18,6 +18,9 @@ use warnings;
 use bytes;
 use Getopt::Long;
 
+# Enable line buffering for STDOUT
+$| = 1;
+
 my %opts = (
     device          => undef,
     addr_type       => 'public',
