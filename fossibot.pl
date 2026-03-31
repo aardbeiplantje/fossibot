@@ -925,11 +925,6 @@ sub f1200_register_pretty {
     my ($self, $reg, $value) = @_;
     return '' unless defined $reg && defined $value;
 
-    if ($reg == 0x0003 || $reg == 0x0006) {
-        my $soc = $self->f1200_soc_percent($value);
-        return sprintf('State of Charge: %.1f %% (raw=%d)', $soc, $value);
-    }
-
     if ($reg == 0x0038) {
         return sprintf('State of Charge (High Res): %.1f %% (raw=%d)', $value / 10.0, $value);
     }
