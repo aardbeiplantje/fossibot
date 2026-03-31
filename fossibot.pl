@@ -929,10 +929,14 @@ sub f1200_register_pretty {
         return sprintf('State of Charge (High Res): %.1f %% (raw=%d)', $value / 10.0, $value);
     }
 
-    # 0x0003 and 0x0006 appear to track AC input power (W).
-    # Observed: values around 101/102 while AC input is ~101 W, and both clear to 0 when AC is removed.
-    if ($reg == 0x0003 || $reg == 0x0006) {
-        return sprintf('AC input power (est): %d W (raw=%d)', $value, $value);
+    # 0x0003 = AC input power to battery charger (W). Equals 0x0006 when no DC load is active.
+    if ($reg == 0x0003) {
+        return sprintf('AC charging power: %d W (raw=%d)', $value, $value);
+    }
+    # 0x0006 = Total AC input power from mains (W) = 0x0003 + DC output power (0x0014).
+    # Confirmed: with 26W DC load, 0x0006=128, 0x0003=102, 0x0014=26.
+    if ($reg == 0x0006) {
+        return sprintf('AC input power (total): %d W (raw=%d)', $value, $value);
     }
 
     # 0x0002 is the input power level / output mode setting. Observed: 1 = 200W mode, 2 = 400W mode.
@@ -952,20 +956,19 @@ sub f1200_register_pretty {
         return sprintf('Rear LED mode: %s (raw=%d)', $state, $value);
     }
 
-    # 0x0014 is AC presence status: 0 when AC input is available, 2 when on battery.
+    # 0x0014 = Total output power (W), confirmed by app "Total Output" label.
+    # Observed: 0 (no load), 13, 26 W matching app display. Tracks DC output; may include USB.
     if ($reg == 0x0014) {
-        my $status = $value == 0 ? 'AC present' : ($value == 2 ? 'Battery mode' : 'Unknown');
-        return sprintf('AC status: %s (raw=%d)', $status, $value);
+        return sprintf('Total output power: %d W (raw=%d)', $value, $value);
     }
     # 0x001E is USB output power in 0.1 W units.
     # Confirmed: raw=39-40 matches device display of 3 W (3.9-4.0 W).
     if ($reg == 0x001E) {
         return sprintf('USB output power: %.1f W (raw=%d)', $value / 10.0, $value);
     }
-    # 0x0027 changes on USB charge connect/disconnect; behaves as a bit-field status register.
-    # Observed values: 0 (idle), 3 (0b011), 6 (0b110), 7 (0b111) during plug/negotiation.
+    # 0x0027 = Total output power (W), appears to mirror 0x0014 in all observed cases.
     if ($reg == 0x0027) {
-        return sprintf('Charging status flags: 0x%02X (raw=%d)', $value, $value);
+        return sprintf('Total output power [b]: %d W (raw=%d)', $value, $value);
     }
     # 0x003A appears to track estimated time-to-full while charging.
     # Observed to ramp down during AC charging (e.g. 374 -> ... -> 17 at high SoC).
