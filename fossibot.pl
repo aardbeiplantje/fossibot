@@ -319,8 +319,8 @@ sub run {
         my ($start, $end_reg);
         my $range = $todo{f1200_query};
         if (defined $range && $range =~ /^(0x[0-9A-Fa-f]+|\d+)(?:-(0x[0-9A-Fa-f]+|\d+))?$/i) {
-            $start    = oct($1);
-            $end_reg  = defined($2) ? oct($2) : $start;
+            $start = ($1 =~ /^0x/i) ? hex($1) : int($1);
+            $end_reg = defined($2) ? (($2 =~ /^0x/i) ? hex($2) : int($2)) : $start;
         } else {
             $start   = 0x0000;
             $end_reg = 0x004F;
@@ -333,7 +333,8 @@ sub run {
             if (!$ok) {
                 print STDERR "ERROR: F1200 query setup failed (CCCD write)\n";
             } else {
-                my $sent = $self->f1200_send_read($start, $count);
+                # Query holding registers (FC03). Device settings like screen timeout are exposed here.
+                my $sent = $self->f1200_send_read($start, $count, 0x03);
                 if (!$sent) {
                     print STDERR "ERROR: F1200 query request write failed\n";
                 } else {
@@ -732,9 +733,10 @@ sub f1200_send_poll {
 }
 
 sub f1200_send_read {
-    my ($self, $start, $count) = @_;
-    # Build a Modbus FC04 read-input-registers request for arbitrary range.
-    my @frame = (0x11, 0x04, ($start >> 8) & 0xFF, $start & 0xFF,
+    my ($self, $start, $count, $func) = @_;
+    $func = 0x03 unless defined $func;
+    # Build a Modbus read-registers request for arbitrary range.
+    my @frame = (0x11, $func, ($start >> 8) & 0xFF, $start & 0xFF,
                              ($count >> 8) & 0xFF, $count & 0xFF);
     my $crc = modbus_crc16(\@frame);
     push @frame, ($crc >> 8) & 0xFF, $crc & 0xFF;  # high byte first, matching device byte order
@@ -753,7 +755,7 @@ sub f1200_expected_frame_len {
         return 8;
     }
 
-    if ($func == 0x04 && @$bytes >= 6) {
+    if (($func == 0x03 || $func == 0x04) && @$bytes >= 6) {
         my $count = f1200_u16_be($bytes, 4);
         return 6 + ($count * 2) + 2;
     }
@@ -883,15 +885,19 @@ sub decode_f1200_payload {
         return $d;
     }
 
-    if ($func == 0x04 && $len == 8) {
+    if (($func == 0x03 || $func == 0x04) && $len == 8) {
+        my $kind = $func == 0x03 ? 'holding' : 'input';
         $d->{message_type} = 'read-input-registers-request';
+        $d->{register_kind} = $kind;
         $d->{start_register} = f1200_u16_be($bytes, 2);
         $d->{register_count} = f1200_u16_be($bytes, 4);
         return $d;
     }
 
-    if ($func == 0x04 && $len >= 10) {
+    if (($func == 0x03 || $func == 0x04) && $len >= 10) {
+        my $kind = $func == 0x03 ? 'holding' : 'input';
         $d->{message_type} = 'read-input-registers-tunneled-response';
+        $d->{register_kind} = $kind;
         $d->{start_register} = f1200_u16_be($bytes, 2);
         $d->{register_count} = f1200_u16_be($bytes, 4);
 
@@ -947,6 +953,9 @@ sub print_f1200_decoded {
     }
 
     if ($d->{message_type} =~ /^read-input-registers/) {
+        if (defined $d->{register_kind}) {
+            print "  Reg Kind:     $d->{register_kind}\n";
+        }
         printf "  Start Reg:    0x%04X\n", $d->{start_register} if defined $d->{start_register};
         printf "  Reg Count:    %d\n", $d->{register_count} if defined $d->{register_count};
     }
@@ -987,7 +996,7 @@ sub print_f1200_decoded {
             }
 
             # Additional likely engineering values seen changing in live diff mode.
-            for my $off (0x0014, 0x001E, 0x0027, 0x0038, 0x003B, 0x0012, 0x0015, 0x0016, 0x0029, 0x002A) {
+            for my $off (0x0014, 0x001E, 0x0027, 0x0038, 0x003A, 0x003B, 0x003E, 0x0012, 0x0015, 0x0016, 0x0029, 0x002A) {
                 next if $off < $base;
                 my $idx = $off - $base;
                 next if $idx < 0 || $idx > $#$r;
@@ -1061,6 +1070,13 @@ sub f1200_register_pretty {
         my $mins = $value % 60;
         return sprintf('Estimated full time: %dh %dm (%d min, raw=%d)', $hours, $mins, $value, $value);
     }
+    # 0x003E is screen auto-shutdown timeout in seconds.
+    # Observed write for 3 min preset: reg 0x003E = 0x00B4 (180 sec).
+    if ($reg == 0x003E) {
+        my $mins = int($value / 60);
+        my $secs = $value % 60;
+        return sprintf('Screen shutdown timeout: %dm %02ds (%d sec, raw=%d)', $mins, $secs, $value, $value);
+    }
     # 0x003B is time remaining in minutes. Without load: ~4496 units = 3d 2h 56m.
     # With load, decreases proportionally. Jitters ±60 min due to AC ripple/estimation.
     if ($reg == 0x003B) {
@@ -1111,7 +1127,7 @@ sub extract_modbus_register_snapshot {
     my ($self, $bytes) = @_;
     my $d = $self->decode_f1200_payload($bytes);
     return undef unless $d->{message_type}
-        && $d->{message_type} eq 'read-input-registers-tunneled-response'
+        && $d->{message_type} =~ /^read-input-registers-tunneled-response$/
         && $d->{register_words}
         && defined $d->{start_register};
 
