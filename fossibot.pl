@@ -900,7 +900,7 @@ sub print_f1200_decoded {
             }
 
             # Additional likely engineering values seen changing in live diff mode.
-            for my $off (0x0014, 0x001E, 0x0027, 0x003B, 0x0012, 0x0015, 0x0016, 0x0029, 0x002A) {
+            for my $off (0x0014, 0x001E, 0x0027, 0x0038, 0x003B, 0x0012, 0x0015, 0x0016, 0x0029, 0x002A) {
                 next if $off < $base;
                 my $idx = $off - $base;
                 next if $idx < 0 || $idx > $#$r;
@@ -924,7 +924,11 @@ sub f1200_register_pretty {
 
     if ($reg == 0x0003 || $reg == 0x0006) {
         my $soc = $self->f1200_soc_percent($value);
-        return sprintf('SOC candidate: %.1f %% (raw=%d)', $soc, $value);
+        return sprintf('State of Charge: %.1f %% (raw=%d)', $soc, $value);
+    }
+
+    if ($reg == 0x0038) {
+        return sprintf('State of Charge (High Res): %.1f %% (raw=%d)', $value / 10.0, $value);
     }
 
     # 0x0014 is AC presence status: 0 when AC input is available, 2 when on battery.
