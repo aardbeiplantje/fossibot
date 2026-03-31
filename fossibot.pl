@@ -37,6 +37,7 @@ my ($service_uuid, $read_handle, $write_req_handle, $write_cmd_handle, $write_he
 my ($do_f1200_poll, $do_f1200_stream, $do_f1200_diff) = (0, 0, 0);
 my $f1200_raw = 0;
 my $f1200_diff_csv;
+my $f1200_query;
 
 GetOptions(
     'device|d=s'        => \$opts{device},
@@ -63,6 +64,7 @@ GetOptions(
     'f1200-diff'        => \$do_f1200_diff,
     'f1200-raw'         => \$f1200_raw,
     'f1200-diff-csv=s'  => \$f1200_diff_csv,
+    'f1200-query:s'     => \$f1200_query,
     'info'              => \$do_info,
     'debug|v+'          => \$opts{debug},
     'help|h'            => sub { print_usage(); exit 0; },
@@ -130,7 +132,7 @@ if (defined $write_req_handle && defined $write_cmd_handle) {
 
 # Default: behave like --info if no action was requested.
 if (!$do_connect && !$do_name && !$do_services && !$do_info && !$do_chars && !$do_listen
-    && !$do_f1200_poll && !$do_f1200_stream && !$do_f1200_diff
+    && !$do_f1200_poll && !$do_f1200_stream && !$do_f1200_diff && !defined($f1200_query)
     && !defined($read_handle) && !defined($write_req_handle) && !defined($write_cmd_handle)
     && !defined($subscribe_handle)) {
     $do_info = 1;
@@ -155,6 +157,7 @@ exit $f1200->run(
     f1200_diff => $do_f1200_diff,
     f1200_raw => $f1200_raw,
     f1200_diff_csv => $f1200_diff_csv,
+    f1200_query => $f1200_query,
     info     => $do_info,
 );
 
@@ -310,6 +313,51 @@ sub run {
         my $target = defined $todo{notify_handle} ? sprintf('0x%04X', $todo{notify_handle}) : 'any';
         print "Listening:    handle=$target for $self->{listen_sec}s\n";
         $self->listen_notifications($self->{listen_sec}, $todo{notify_handle});
+    }
+
+    if (defined $todo{f1200_query}) {
+        my ($start, $end_reg);
+        my $range = $todo{f1200_query};
+        if (defined $range && $range =~ /^(0x[0-9A-Fa-f]+|\d+)(?:-(0x[0-9A-Fa-f]+|\d+))?$/i) {
+            $start    = oct($1);
+            $end_reg  = defined($2) ? oct($2) : $start;
+        } else {
+            $start   = 0x0000;
+            $end_reg = 0x004F;
+        }
+        my $count = $end_reg - $start + 1;
+        if ($count < 1 || $count > 125) {
+            print STDERR "ERROR: --f1200-query range must be 1..125 registers\n";
+        } else {
+            my $ok = $self->f1200_enable_notifications();
+            if (!$ok) {
+                print STDERR "ERROR: F1200 query setup failed (CCCD write)\n";
+            } else {
+                my $sent = $self->f1200_send_read($start, $count);
+                if (!$sent) {
+                    print STDERR "ERROR: F1200 query request write failed\n";
+                } else {
+                    my $rsp = $self->f1200_request_status_raw();
+                    if ($rsp) {
+                        my $snap = $self->extract_modbus_register_snapshot($rsp->{value});
+                        if ($snap) {
+                            printf "Query 0x%04X..0x%04X (%d registers):\n", $start, $end_reg, $count;
+                            for my $reg (sort { $a <=> $b } keys %$snap) {
+                                my $val   = $snap->{$reg};
+                                my $label = $self->f1200_register_pretty($reg, $val);
+                                printf "  [0x%04X] %5d  (0x%04X)", $reg, $val, $val;
+                                print "  # $label" if defined($label) && length($label);
+                                print "\n";
+                            }
+                        } else {
+                            print STDERR "ERROR: could not parse query response\n";
+                        }
+                    } else {
+                        print STDERR "ERROR: F1200 query timed out\n";
+                    }
+                }
+            }
+        }
     }
 
     if ($todo{f1200_poll}) {
@@ -683,6 +731,16 @@ sub f1200_send_poll {
     return $self->att_write_req_handle(F1200_WRITE_HANDLE, 0x11, 0x04, 0x00, 0x00, 0x00, 0x50, 0xA6, 0xF2);
 }
 
+sub f1200_send_read {
+    my ($self, $start, $count) = @_;
+    # Build a Modbus FC04 read-input-registers request for arbitrary range.
+    my @frame = (0x11, 0x04, ($start >> 8) & 0xFF, $start & 0xFF,
+                             ($count >> 8) & 0xFF, $count & 0xFF);
+    my $crc = modbus_crc16(\@frame);
+    push @frame, ($crc >> 8) & 0xFF, $crc & 0xFF;  # high byte first, matching device byte order
+    return $self->att_write_req_handle(F1200_WRITE_HANDLE, @frame);
+}
+
 sub f1200_expected_frame_len {
     my ($self, $bytes) = @_;
     return undef unless defined $bytes && @$bytes >= 2;
@@ -701,6 +759,32 @@ sub f1200_expected_frame_len {
     }
 
     return undef;
+}
+
+sub f1200_request_status_raw {
+    # Read and reassemble a notification response without sending the poll.
+    my ($self) = @_;
+    my $first = $self->read_notification($self->{response_timeout}, F1200_NOTIFY_HANDLE);
+    return undef unless $first;
+
+    my @buf = @{$first->{value}};
+    my $expected = $self->f1200_expected_frame_len(\@buf);
+
+    my $deadline = time() + $self->{response_timeout};
+    while (defined $expected && scalar(@buf) < $expected && time() < $deadline) {
+        my $left = $deadline - time();
+        last if $left <= 0;
+        my $next = $self->read_notification($left < 0.5 ? $left : 0.5, F1200_NOTIFY_HANDLE);
+        last unless $next;
+        push @buf, @{$next->{value}};
+    }
+    splice @buf, $expected if defined $expected && scalar(@buf) > $expected;
+    return {
+        handle => $first->{handle},
+        value  => \@buf,
+        expected_len => $expected,
+        complete => (defined($expected) ? (scalar(@buf) == $expected ? 1 : 0) : 1),
+    };
 }
 
 sub f1200_request_status {
@@ -1151,6 +1235,8 @@ Actions (defaults to --info):
     --f1200-poll    Capture-based F1200 status poll (write 0x0036, notify 0x0038)
     --f1200-stream  Repeated F1200 status polling + notifications for --listen-sec
     --f1200-diff    Show only changed Modbus registers over time
+    --f1200-query [REG[-REG]]  Read specific register(s) once and print with labels
+                    REG is hex (0x0003) or decimal. Defaults to full 0x0000-0x004F range.
     --f1200-raw     With F1200 poll/stream, also print raw hex notification
   --info          Connect + name + services summary
 
