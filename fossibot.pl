@@ -25,11 +25,15 @@ my %opts = (
     mtu             => 160,
     response_timeout_ms => 2500,
     listen_sec      => 10,
+    f1200_interval_ms => 1000,
     debug           => 0,
 );
 
 my ($do_connect, $do_name, $do_services, $do_info, $do_chars, $do_listen) = (0) x 6;
 my ($service_uuid, $read_handle, $write_req_handle, $write_cmd_handle, $write_hex, $subscribe_handle, $notify_handle);
+my ($do_f1200_poll, $do_f1200_stream, $do_f1200_diff) = (0, 0, 0);
+my $f1200_raw = 0;
+my $f1200_diff_csv;
 
 GetOptions(
     'device|d=s'        => \$opts{device},
@@ -38,6 +42,7 @@ GetOptions(
     'mtu=i'             => \$opts{mtu},
     'response-timeout-ms=i' => \$opts{response_timeout_ms},
     'listen-sec=f'      => \$opts{listen_sec},
+    'f1200-interval-ms=i' => \$opts{f1200_interval_ms},
     'connect'           => \$do_connect,
     'name'              => \$do_name,
     'services'          => \$do_services,
@@ -50,6 +55,11 @@ GetOptions(
     'subscribe-handle=s' => \$subscribe_handle,
     'notify-handle=s'   => \$notify_handle,
     'listen'            => \$do_listen,
+    'f1200-poll'        => \$do_f1200_poll,
+    'f1200-stream'      => \$do_f1200_stream,
+    'f1200-diff'        => \$do_f1200_diff,
+    'f1200-raw'         => \$f1200_raw,
+    'f1200-diff-csv=s'  => \$f1200_diff_csv,
     'info'              => \$do_info,
     'debug|v+'          => \$opts{debug},
     'help|h'            => sub { print_usage(); exit 0; },
@@ -78,6 +88,10 @@ if ($opts{response_timeout_ms} < 100 || $opts{response_timeout_ms} > 30000) {
 }
 if ($opts{listen_sec} <= 0 || $opts{listen_sec} > 3600) {
     print STDERR "Error: --listen-sec must be >0 and <=3600\n";
+    exit 1;
+}
+if (defined($opts{f1200_interval_ms}) && ($opts{f1200_interval_ms} < 100 || $opts{f1200_interval_ms} > 10000)) {
+    print STDERR "Error: --f1200-interval-ms must be in 100..10000\n";
     exit 1;
 }
 
@@ -113,6 +127,7 @@ if (defined $write_req_handle && defined $write_cmd_handle) {
 
 # Default: behave like --info if no action was requested.
 if (!$do_connect && !$do_name && !$do_services && !$do_info && !$do_chars && !$do_listen
+    && !$do_f1200_poll && !$do_f1200_stream && !$do_f1200_diff
     && !defined($read_handle) && !defined($write_req_handle) && !defined($write_cmd_handle)
     && !defined($subscribe_handle)) {
     $do_info = 1;
@@ -132,6 +147,11 @@ exit $f1200->run(
     subscribe_handle => $subscribe_handle,
     notify_handle => $notify_handle,
     listen  => $do_listen,
+    f1200_poll => $do_f1200_poll,
+    f1200_stream => $do_f1200_stream,
+    f1200_diff => $do_f1200_diff,
+    f1200_raw => $f1200_raw,
+    f1200_diff_csv => $f1200_diff_csv,
     info     => $do_info,
 );
 
@@ -168,6 +188,12 @@ use constant {
     GATT_PRIMARY_SERVICE    => 0x2800,
     GATT_CHARACTERISTIC     => 0x2803,
     GATT_DEVICE_NAME        => 0x2A00,
+
+    # Inferred from provided F1200 capture
+    F1200_SERVICE_UUID      => 0xA002,
+    F1200_WRITE_HANDLE      => 0x0036,
+    F1200_NOTIFY_HANDLE     => 0x0038,
+    F1200_CCCD_HANDLE       => 0x0039,
 };
 
 sub new {
@@ -179,6 +205,9 @@ sub new {
         mtu             => $o{mtu} // 160,
         response_timeout => ($o{response_timeout_ms} // 2500) / 1000.0,
         listen_sec      => $o{listen_sec} // 10,
+        f1200_interval_sec => ($o{f1200_interval_ms} // 1000) / 1000.0,
+        f1200_raw       => $o{f1200_raw} ? 1 : 0,
+        f1200_diff_csv  => $o{f1200_diff_csv},
         debug           => $o{debug} // 0,
         socket          => undef,
     }, $class;
@@ -278,6 +307,96 @@ sub run {
         my $target = defined $todo{notify_handle} ? sprintf('0x%04X', $todo{notify_handle}) : 'any';
         print "Listening:    handle=$target for $self->{listen_sec}s\n";
         $self->listen_notifications($self->{listen_sec}, $todo{notify_handle});
+    }
+
+    if ($todo{f1200_poll}) {
+        my $ok = $self->f1200_enable_notifications();
+        if (!$ok) {
+            print STDERR "ERROR: F1200 poll setup failed (CCCD write)\n";
+        } else {
+            my $rsp = $self->f1200_request_status();
+            if ($rsp) {
+                printf "F1200 poll rsp (0x%04X)\n", $rsp->{handle};
+                if (defined $rsp->{expected_len} && !$rsp->{complete}) {
+                    printf "Note:         partial frame (%d/%d bytes), waiting window may be too short\n",
+                        scalar(@{$rsp->{value}}), $rsp->{expected_len};
+                }
+                $self->print_f1200_decoded($rsp->{value});
+                printf "Raw:          %s\n", hex_bytes($rsp->{value}) if $self->{f1200_raw};
+            } else {
+                print STDERR "ERROR: F1200 poll timed out waiting for notification\n";
+            }
+        }
+    }
+
+    if ($todo{f1200_stream}) {
+        my $ok = $self->f1200_enable_notifications();
+        if (!$ok) {
+            print STDERR "ERROR: F1200 stream setup failed (CCCD write)\n";
+        } else {
+            my $end = time() + $self->{listen_sec};
+            print "F1200 stream: polling and waiting for notifications\n";
+            while (time() < $end) {
+                my $rsp = $self->f1200_request_status();
+                if ($rsp) {
+                    printf "F1200 notify (0x%04X)\n", $rsp->{handle};
+                    if (defined $rsp->{expected_len} && !$rsp->{complete}) {
+                        printf "Note:         partial frame (%d/%d bytes)\n",
+                            scalar(@{$rsp->{value}}), $rsp->{expected_len};
+                    }
+                    $self->print_f1200_decoded($rsp->{value});
+                    printf "Raw:          %s\n", hex_bytes($rsp->{value}) if $self->{f1200_raw};
+                }
+                select(undef, undef, undef, 0.2);
+            }
+        }
+    }
+
+    if ($todo{f1200_diff}) {
+        my $ok = $self->f1200_enable_notifications();
+        if (!$ok) {
+            print STDERR "ERROR: F1200 diff setup failed (CCCD write)\n";
+        } else {
+            my $csvfh;
+            if (defined $self->{f1200_diff_csv} && length $self->{f1200_diff_csv}) {
+                if (open($csvfh, '>', $self->{f1200_diff_csv})) {
+                    print $csvfh "epoch,reg_hex,old_hex,new_hex,old_dec,new_dec\n";
+                    print "Diff CSV:      $self->{f1200_diff_csv}\n";
+                } else {
+                    print STDERR "ERROR: cannot open diff csv '$self->{f1200_diff_csv}' for writing\n";
+                }
+            }
+
+            my $end = time() + $self->{listen_sec};
+            my $prev;
+            print "F1200 diff:   tracking changed registers\n";
+            while (time() < $end) {
+                my $rsp = $self->f1200_request_status();
+                if ($rsp) {
+                    my $snap = $self->extract_modbus_register_snapshot($rsp->{value});
+                    if ($snap && $prev) {
+                        my $changes = $self->diff_register_snapshots($prev, $snap);
+                        if (@$changes) {
+                            my $ts = time();
+                            print "Changes:\n";
+                            for my $c (@$changes) {
+                                my $extra = $self->f1200_register_pretty($c->{reg}, $c->{new});
+                                printf "  [0x%04X] %04X -> %04X (%d -> %d)\n",
+                                    $c->{reg}, $c->{old}, $c->{new}, $c->{old}, $c->{new};
+                                print "           $extra\n" if defined($extra) && length($extra);
+                                if ($csvfh) {
+                                    printf $csvfh "%d,0x%04X,%04X,%04X,%d,%d\n",
+                                        $ts, $c->{reg}, $c->{old}, $c->{new}, $c->{old}, $c->{new};
+                                }
+                            }
+                        }
+                    }
+                    $prev = $snap if $snap;
+                }
+                select(undef, undef, undef, $self->{f1200_interval_sec});
+            }
+            close($csvfh) if $csvfh;
+        }
     }
 
     $self->ble_disconnect();
@@ -550,6 +669,310 @@ sub listen_notifications {
     }
 }
 
+sub f1200_enable_notifications {
+    my ($self) = @_;
+    return $self->att_write_req_handle(F1200_CCCD_HANDLE, 0x01, 0x00);
+}
+
+sub f1200_send_poll {
+    my ($self) = @_;
+    # Seen repeatedly in capture as status request payload to handle 0x0036.
+    return $self->att_write_req_handle(F1200_WRITE_HANDLE, 0x11, 0x04, 0x00, 0x00, 0x00, 0x50, 0xA6, 0xF2);
+}
+
+sub f1200_expected_frame_len {
+    my ($self, $bytes) = @_;
+    return undef unless defined $bytes && @$bytes >= 2;
+
+    my $addr = $bytes->[0];
+    my $func = $bytes->[1];
+    return undef unless $addr == 0x11;
+
+    if ($func == 0x06) {
+        return 8;
+    }
+
+    if ($func == 0x04 && @$bytes >= 6) {
+        my $count = f1200_u16_be($bytes, 4);
+        return 6 + ($count * 2) + 2;
+    }
+
+    return undef;
+}
+
+sub f1200_request_status {
+    my ($self) = @_;
+    return undef unless $self->f1200_send_poll();
+
+    my $first = $self->read_notification($self->{response_timeout}, F1200_NOTIFY_HANDLE);
+    return undef unless $first;
+
+    my @buf = @{$first->{value}};
+    my $expected = $self->f1200_expected_frame_len(\@buf);
+
+    my $deadline = time() + $self->{response_timeout};
+    while (defined $expected && scalar(@buf) < $expected && time() < $deadline) {
+        my $left = $deadline - time();
+        last if $left <= 0;
+
+        my $next = $self->read_notification($left < 0.5 ? $left : 0.5, F1200_NOTIFY_HANDLE);
+        last unless $next;
+
+        push @buf, @{$next->{value}};
+    }
+
+    if (defined $expected && scalar(@buf) > $expected) {
+        splice @buf, $expected;
+    }
+
+    return {
+        handle => $first->{handle},
+        value  => \@buf,
+        expected_len => $expected,
+        complete => (defined($expected) ? (scalar(@buf) == $expected ? 1 : 0) : 1),
+    };
+}
+
+sub f1200_u16_be {
+    my ($bytes, $off) = @_;
+    return undef if !defined($bytes) || $off < 0 || $off + 1 > $#$bytes;
+    return (($bytes->[$off] << 8) | $bytes->[$off + 1]);
+}
+
+sub f1200_u16_le {
+    my ($bytes, $off) = @_;
+    return undef if !defined($bytes) || $off < 0 || $off + 1 > $#$bytes;
+    return ($bytes->[$off] | ($bytes->[$off + 1] << 8));
+}
+
+sub modbus_crc16 {
+    my ($bytes) = @_;
+    my $crc = 0xFFFF;
+    for my $b (@$bytes) {
+        $crc ^= ($b & 0xFF);
+        for (1..8) {
+            if ($crc & 0x0001) {
+                $crc = (($crc >> 1) ^ 0xA001) & 0xFFFF;
+            } else {
+                $crc = ($crc >> 1) & 0xFFFF;
+            }
+        }
+    }
+    return $crc;
+}
+
+sub swap16 {
+    my ($v) = @_;
+    return (($v & 0x00FF) << 8) | (($v & 0xFF00) >> 8);
+}
+
+sub decode_f1200_payload {
+    my ($self, $bytes) = @_;
+    return { kind => 'empty' } unless defined $bytes && @$bytes;
+
+    my $len = scalar(@$bytes);
+    my $addr = $bytes->[0] // 0;
+    my $func = $bytes->[1] // 0;
+
+    my $d = {
+        kind => 'modbus-rtu-over-ble',
+        len  => $len,
+        slave => $addr,
+        function => $func,
+    };
+
+    if ($len >= 4) {
+        my @body = @$bytes[0 .. $len - 3];
+        $d->{crc16_rx_le} = f1200_u16_le($bytes, $len - 2);
+        $d->{crc16_calc_modbus} = modbus_crc16(\@body);
+        $d->{crc16_calc_le} = swap16($d->{crc16_calc_modbus});
+        $d->{crc_ok}      = ($d->{crc16_rx_le} == $d->{crc16_calc_le}) ? 1 : 0;
+    }
+
+    if ($func == 0x06 && $len == 8) {
+        $d->{message_type} = 'write-single-register';
+        $d->{register} = f1200_u16_be($bytes, 2);
+        $d->{value}    = f1200_u16_be($bytes, 4);
+        return $d;
+    }
+
+    if ($func == 0x04 && $len == 8) {
+        $d->{message_type} = 'read-input-registers-request';
+        $d->{start_register} = f1200_u16_be($bytes, 2);
+        $d->{register_count} = f1200_u16_be($bytes, 4);
+        return $d;
+    }
+
+    if ($func == 0x04 && $len >= 10) {
+        $d->{message_type} = 'read-input-registers-tunneled-response';
+        $d->{start_register} = f1200_u16_be($bytes, 2);
+        $d->{register_count} = f1200_u16_be($bytes, 4);
+
+        my $data_offset = 6;
+        my $data_len = $len - $data_offset - 2;
+        $d->{data_bytes} = $data_len;
+        $d->{expected_data_bytes} = (defined $d->{register_count}) ? $d->{register_count} * 2 : undef;
+        $d->{length_match} = (defined $d->{expected_data_bytes} && $d->{expected_data_bytes} == $data_len) ? 1 : 0;
+
+        my @regs;
+        for (my $i = 0; $i + 1 < $data_len; $i += 2) {
+            my $off = $data_offset + $i;
+            push @regs, f1200_u16_be($bytes, $off);
+        }
+        $d->{register_words} = \@regs;
+
+        return $d;
+    }
+
+    $d->{message_type} = 'unknown';
+
+    return $d;
+}
+
+sub print_f1200_decoded {
+    my ($self, $bytes) = @_;
+    my $d = $self->decode_f1200_payload($bytes);
+
+    print "Decoded:\n";
+    print "  Kind:         $d->{kind}\n";
+    print "  Length:       $d->{len}\n" if defined $d->{len};
+    printf "  Slave/Func:   0x%02X / 0x%02X\n", $d->{slave}, $d->{function}
+        if defined $d->{slave} && defined $d->{function};
+    print "  Msg Type:     $d->{message_type}\n" if defined $d->{message_type};
+
+    if (defined $d->{crc16_rx_le}) {
+        printf "  CRC16 Rx:     0x%04X (LE)\n", $d->{crc16_rx_le};
+    }
+    if (defined $d->{crc16_calc_modbus}) {
+        printf "  CRC16 Calc:   0x%04X (modbus order)\n", $d->{crc16_calc_modbus};
+    }
+    if (defined $d->{crc16_calc_le}) {
+        printf "  CRC16 Calc:   0x%04X (wire LE)\n", $d->{crc16_calc_le};
+    }
+    if (defined $d->{crc_ok}) {
+        print "  CRC Valid:    " . ($d->{crc_ok} ? 'yes' : 'no') . "\n";
+    }
+
+    if ($d->{message_type} eq 'write-single-register') {
+        printf "  Register:     0x%04X\n", $d->{register} if defined $d->{register};
+        printf "  Value:        0x%04X (%d)\n", $d->{value}, $d->{value} if defined $d->{value};
+        return;
+    }
+
+    if ($d->{message_type} =~ /^read-input-registers/) {
+        printf "  Start Reg:    0x%04X\n", $d->{start_register} if defined $d->{start_register};
+        printf "  Reg Count:    %d\n", $d->{register_count} if defined $d->{register_count};
+    }
+
+    if ($d->{message_type} eq 'read-input-registers-tunneled-response') {
+        printf "  Data Bytes:   %d\n", $d->{data_bytes} if defined $d->{data_bytes};
+        if (defined $d->{expected_data_bytes}) {
+            printf "  Expected:     %d\n", $d->{expected_data_bytes};
+        }
+        if (defined $d->{length_match}) {
+            print "  Length Match: " . ($d->{length_match} ? 'yes' : 'no') . "\n";
+        }
+
+        if ($d->{register_words} && @{$d->{register_words}}) {
+            my $show = @{$d->{register_words}} < 16 ? scalar(@{$d->{register_words}}) : 16;
+            print "  Registers:    ";
+            for my $i (0 .. $show - 1) {
+                my $reg = ($d->{start_register} // 0) + $i;
+                my $val = $d->{register_words}->[$i];
+                printf "[%04X]=%04X", $reg, $val;
+                print($i == $show - 1 ? "\n" : " ");
+            }
+            if (@{$d->{register_words}} > $show) {
+                printf "  Registers:    ... (%d total words)\n", scalar(@{$d->{register_words}});
+            }
+
+            my $r = $d->{register_words};
+            my $base = $d->{start_register} // 0;
+
+            # SOC conversion inferred from observed values: register value appears to be 0.5% units.
+            for my $off (3, 6) {
+                next unless $off <= $#$r;
+                my $reg = $base + $off;
+                my $raw = $r->[$off];
+                my $soc = $self->f1200_soc_percent($raw);
+                next unless defined $soc;
+                printf "  SOC 0x%04X:   %.1f %% (raw=%d)\n", $reg, $soc, $raw;
+            }
+
+            # Additional likely engineering values seen changing in live diff mode.
+            for my $off (0x0012, 0x0015, 0x0016) {
+                next if $off < $base;
+                my $idx = $off - $base;
+                next if $idx < 0 || $idx > $#$r;
+                my $pretty = $self->f1200_register_pretty($off, $r->[$idx]);
+                print "  Reg 0x" . sprintf('%04X', $off) . ":  $pretty\n" if length($pretty);
+            }
+        }
+        return;
+    }
+}
+
+sub f1200_soc_percent {
+    my ($self, $raw) = @_;
+    return undef unless defined $raw;
+    return $raw / 2.0;
+}
+
+sub f1200_register_pretty {
+    my ($self, $reg, $value) = @_;
+    return '' unless defined $reg && defined $value;
+
+    if ($reg == 0x0003 || $reg == 0x0006) {
+        my $soc = $self->f1200_soc_percent($value);
+        return sprintf('SOC candidate: %.1f %% (raw=%d)', $soc, $value);
+    }
+
+    # Based on observed jitter ranges during live diffing.
+    if ($reg == 0x0012) {
+        return sprintf('Voltage candidate A: %.1f V (raw=%d)', $value / 10.0, $value);
+    }
+    if ($reg == 0x0015) {
+        return sprintf('Voltage candidate B: %.1f V (raw=%d)', $value / 10.0, $value);
+    }
+    if ($reg == 0x0016) {
+        return sprintf('Frequency candidate: %.2f Hz (raw=%d)', $value / 100.0, $value);
+    }
+
+    return '';
+}
+
+sub extract_modbus_register_snapshot {
+    my ($self, $bytes) = @_;
+    my $d = $self->decode_f1200_payload($bytes);
+    return undef unless $d->{message_type}
+        && $d->{message_type} eq 'read-input-registers-tunneled-response'
+        && $d->{register_words}
+        && defined $d->{start_register};
+
+    my %regs;
+    for my $i (0 .. $#{$d->{register_words}}) {
+        $regs{$d->{start_register} + $i} = $d->{register_words}->[$i];
+    }
+    return \%regs;
+}
+
+sub diff_register_snapshots {
+    my ($self, $old, $new) = @_;
+    return [] unless $old && $new;
+
+    my @changes;
+    for my $reg (sort { $a <=> $b } keys %$new) {
+        next unless exists $old->{$reg};
+        next if $old->{$reg} == $new->{$reg};
+        push @changes, {
+            reg => $reg,
+            old => $old->{$reg},
+            new => $new->{$reg},
+        };
+    }
+    return \@changes;
+}
+
 sub format_uuid {
     my ($raw) = @_;
     if (length($raw) == 2) {
@@ -643,6 +1066,10 @@ Actions (defaults to --info):
     --subscribe-handle H    Enable notify on H by writing 0x0001 to H+1 (CCCD)
     --listen        Print notifications for --listen-sec seconds
     --notify-handle H       Filter --listen to notifications from handle H
+    --f1200-poll    Capture-based F1200 status poll (write 0x0036, notify 0x0038)
+    --f1200-stream  Repeated F1200 status polling + notifications for --listen-sec
+    --f1200-diff    Show only changed Modbus registers over time
+    --f1200-raw     With F1200 poll/stream, also print raw hex notification
   --info          Connect + name + services summary
 
 Required:
@@ -655,6 +1082,8 @@ Options:
     --service-uuid UUID     Filter --chars to one service UUID
     --response-timeout-ms N Timeout for ATT req/rsp operations (default: 2500)
     --listen-sec SEC        Notification listen duration (default: 10)
+    --f1200-interval-ms N   Poll interval for --f1200-diff (default: 1000)
+    --f1200-diff-csv PATH   Write changed-register events to CSV
     --write-hex BYTES       Hex bytes e.g. "AA BB 01 02" or "AABB0102"
   -v, --debug             Verbose output
   -h, --help              Show this help
@@ -667,6 +1096,10 @@ Examples:
     $0 -d AA:BB:CC:DD:EE:FF --read-handle 0x0025
     $0 -d AA:BB:CC:DD:EE:FF --write-req-handle 0x0028 --write-hex "01 00"
     $0 -d AA:BB:CC:DD:EE:FF --subscribe-handle 0x0028 --listen --listen-sec 20
+    $0 -d AA:BB:CC:DD:EE:FF --f1200-poll
+    $0 -d AA:BB:CC:DD:EE:FF --f1200-stream --listen-sec 30
+    $0 -d AA:BB:CC:DD:EE:FF --f1200-diff --listen-sec 60 --f1200-interval-ms 1000
+    $0 -d AA:BB:CC:DD:EE:FF --f1200-diff --f1200-diff-csv f1200-diff.csv
   $0 -d AA:BB:CC:DD:EE:FF --info -v
 EOF
 }
