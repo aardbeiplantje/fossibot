@@ -980,15 +980,19 @@ sub f1200_register_pretty {
     if ($reg == 0x0016) {
         return sprintf('AC input frequency: %.2f Hz (raw=%d)', $value / 100.0, $value);
     }
-    # 0x0029 changes with AC on/off (~2052 counts) and DC on/off (~640 counts).
-    # Consistent with total output power in 0.1 W units.
+    # 0x0029 is aggregate output/convertor power in 0.01 W units.
+    # Observed: DC enable adds a fixed baseline (e.g. 1152 -> 11.52 W),
+    # and enabling USB increases it further (e.g. +512 -> +5.12 W).
     if ($reg == 0x0029) {
-        return sprintf('Output power: %.1f W (raw=%d)', $value / 10.0, $value);
+        return sprintf('Output power: %.2f W (raw=%d)', $value / 100.0, $value);
     }
-    # 0x002A tracks DC bus output current (DC and USB outputs share this register).
-    # Both DC and USB enable produce raw=216 (2.16 A) for comparable loads.
+    # 0x002A is a mixed flag/current register.
+    # Observed: 0x4000 toggles with DC output enable; low 14 bits carry current in 0.01 A units.
     if ($reg == 0x002A) {
-        return sprintf('DC bus output current: %.2f A (raw=%d)', $value / 100.0, $value);
+        my $dc_enabled = ($value & 0x4000) ? 1 : 0;
+        my $amps_raw = $value & 0x3FFF;
+        return sprintf('DC bus: %s, current %.2f A (raw=0x%04X)',
+            ($dc_enabled ? 'enabled' : 'disabled'), $amps_raw / 100.0, $value);
     }
 
     # 0x0030 is a status/mode bitfield. Observed: 0x8000 (AC present), 0x4000 (Battery/Charging mode), 0x0000 (transition/idle).
