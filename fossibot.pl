@@ -929,6 +929,17 @@ sub f1200_register_pretty {
         return sprintf('State of Charge (High Res): %.1f %% (raw=%d)', $value / 10.0, $value);
     }
 
+    # 0x000F is the rear LED brightness/mode. Observed: 0 = off, 10 (0x0A) = on.
+    if ($reg == 0x000F) {
+        my $state = $value == 0 ? 'off' : sprintf('on (level=%d)', $value);
+        return sprintf('Rear LED brightness: %s (raw=%d)', $state, $value);
+    }
+    # 0x0019 is the rear LED mode. Observed: 0 = off, 1 = solid on, 2 = SOS flashing, 3 = flashing.
+    if ($reg == 0x0019) {
+        my $state = $value == 0 ? 'off' : ($value == 1 ? 'solid on' : ($value == 2 ? 'SOS flashing' : ($value == 3 ? 'flashing' : sprintf('unknown (0x%02X)', $value))));
+        return sprintf('Rear LED mode: %s (raw=%d)', $state, $value);
+    }
+
     # 0x0014 is AC presence status: 0 when AC input is available, 2 when on battery.
     if ($reg == 0x0014) {
         my $status = $value == 0 ? 'AC present' : ($value == 2 ? 'Battery mode' : 'Unknown');
