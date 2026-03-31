@@ -900,7 +900,7 @@ sub print_f1200_decoded {
             }
 
             # Additional likely engineering values seen changing in live diff mode.
-            for my $off (0x001E, 0x0027, 0x0012, 0x0015, 0x0016, 0x0029, 0x002A) {
+            for my $off (0x0014, 0x001E, 0x0027, 0x003B, 0x0012, 0x0015, 0x0016, 0x0029, 0x002A) {
                 next if $off < $base;
                 my $idx = $off - $base;
                 next if $idx < 0 || $idx > $#$r;
@@ -927,6 +927,11 @@ sub f1200_register_pretty {
         return sprintf('SOC candidate: %.1f %% (raw=%d)', $soc, $value);
     }
 
+    # 0x0014 is AC presence status: 0 when AC input is available, 2 when on battery.
+    if ($reg == 0x0014) {
+        my $status = $value == 0 ? 'AC present' : ($value == 2 ? 'Battery mode' : 'Unknown');
+        return sprintf('AC status: %s (raw=%d)', $status, $value);
+    }
     # 0x001E is USB output power in 0.1 W units.
     # Confirmed: raw=39-40 matches device display of 3 W (3.9-4.0 W).
     if ($reg == 0x001E) {
@@ -937,6 +942,15 @@ sub f1200_register_pretty {
     if ($reg == 0x0027) {
         return sprintf('Charging status flags: 0x%02X (raw=%d)', $value, $value);
     }
+    # 0x003B is time remaining in minutes. Without load: ~4496 units = 3d 2h 56m.
+    # With load, decreases proportionally. Jitters ±60 min due to AC ripple/estimation.
+    if ($reg == 0x003B) {
+        my $hours = int($value / 60);
+        my $mins = $value % 60;
+        my $days = int($hours / 24);
+        $hours = $hours % 24;
+        return sprintf('Time remaining: %dd %dh %dm (%d min, raw=%d)', $days, $hours, $mins, $value, $value);
+    }
     # Based on observed jitter ranges during live diffing.
     if ($reg == 0x0012) {
         return sprintf('AC output voltage: %.1f V (raw=%d)', $value / 10.0, $value);
@@ -945,7 +959,7 @@ sub f1200_register_pretty {
         return sprintf('AC input voltage: %.1f V (raw=%d)', $value / 10.0, $value);
     }
     if ($reg == 0x0016) {
-        return sprintf('Frequency candidate: %.2f Hz (raw=%d)', $value / 100.0, $value);
+        return sprintf('AC input frequency: %.2f Hz (raw=%d)', $value / 100.0, $value);
     }
     # 0x0029 changes with AC on/off (~2052 counts) and DC on/off (~640 counts).
     # Consistent with total output power in 0.1 W units.
