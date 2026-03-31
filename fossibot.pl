@@ -1020,6 +1020,18 @@ sub f1200_register_pretty {
     $reg_kind = 'input' unless defined $reg_kind && length $reg_kind;
 
     if ($reg_kind eq 'holding') {
+        if ($reg == 0x0018) {
+            my $state = $value ? 'on' : 'off';
+            return sprintf('USB output switch (est): %s (raw=%d)', $state, $value);
+        }
+        if ($reg == 0x001A) {
+            my $state = $value ? 'on' : 'off';
+            return sprintf('AC output switch (est): %s (raw=%d)', $state, $value);
+        }
+        if ($reg == 0x001B) {
+            my $mode = $value == 0 ? 'off' : ($value == 1 ? 'always on' : ($value == 2 ? 'SOS' : ($value == 3 ? 'flash' : sprintf('unknown (%d)', $value))));
+            return sprintf('LED light mode (est): %s (raw=%d)', $mode, $value);
+        }
         if ($reg == 0x0038) {
             my $state = $value ? 'on' : 'off';
             return sprintf('Key sound (est): %s (raw=%d)', $state, $value);
@@ -1030,12 +1042,12 @@ sub f1200_register_pretty {
         if ($reg == 0x003C) {
             my $hours = int($value / 60);
             my $mins = $value % 60;
-            return sprintf('AC/DC no-load standby [a] (est): %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
+            return sprintf('AC no-load standby (est): %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
         }
         if ($reg == 0x003D) {
             my $hours = int($value / 60);
             my $mins = $value % 60;
-            return sprintf('AC/DC no-load standby [b] (est): %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
+            return sprintf('DC no-load standby (est): %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
         }
         if ($reg == 0x000C) {
             return sprintf('Energy mgmt discharge limit (est): %d %% (raw=%d)', $value, $value);
