@@ -345,7 +345,7 @@ sub run {
                             printf "Query 0x%04X..0x%04X (%d registers):\n", $start, $end_reg, $count;
                             for my $reg (sort { $a <=> $b } keys %$snap) {
                                 my $val   = $snap->{$reg};
-                                my $label = $self->f1200_register_pretty($reg, $val);
+                                my $label = $self->f1200_register_pretty($reg, $val, 'holding');
                                 printf "  [0x%04X] %5d  (0x%04X)", $reg, $val, $val;
                                 print "  # $label" if defined($label) && length($label);
                                 print "\n";
@@ -1000,7 +1000,7 @@ sub print_f1200_decoded {
                 next if $off < $base;
                 my $idx = $off - $base;
                 next if $idx < 0 || $idx > $#$r;
-                my $pretty = $self->f1200_register_pretty($off, $r->[$idx]);
+                my $pretty = $self->f1200_register_pretty($off, $r->[$idx], $d->{register_kind});
                 print "  Reg 0x" . sprintf('%04X', $off) . ":  $pretty\n" if length($pretty);
             }
         }
@@ -1015,8 +1015,53 @@ sub f1200_soc_percent {
 }
 
 sub f1200_register_pretty {
-    my ($self, $reg, $value) = @_;
+    my ($self, $reg, $value, $reg_kind) = @_;
     return '' unless defined $reg && defined $value;
+    $reg_kind = 'input' unless defined $reg_kind && length $reg_kind;
+
+    if ($reg_kind eq 'holding') {
+        if ($reg == 0x0038) {
+            my $state = $value ? 'on' : 'off';
+            return sprintf('Key sound (est): %s (raw=%d)', $state, $value);
+        }
+        if ($reg == 0x003B) {
+            return sprintf('USB no-load standby time (est): %d min (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x003C) {
+            my $hours = int($value / 60);
+            my $mins = $value % 60;
+            return sprintf('AC/DC no-load standby [a] (est): %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
+        }
+        if ($reg == 0x003D) {
+            my $hours = int($value / 60);
+            my $mins = $value % 60;
+            return sprintf('AC/DC no-load standby [b] (est): %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
+        }
+        if ($reg == 0x000C) {
+            return sprintf('Energy mgmt discharge limit (est): %d %% (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x000E) {
+            return sprintf('EPS AC charge limit (est): %.1f %% (raw=%d)', $value / 10.0, $value);
+        }
+        if ($reg == 0x0014) {
+            return sprintf('Max charging current (est): %d A (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x003E) {
+            my $mins = int($value / 60);
+            my $secs = $value % 60;
+            return sprintf('Screen shutdown timeout: %dm %02ds (%d sec, raw=%d)', $mins, $secs, $value, $value);
+        }
+        if ($reg == 0x0042) {
+            return sprintf('Max discharge limit (est): %.1f %% (raw=%d)', $value / 10.0, $value);
+        }
+        if ($reg == 0x0043) {
+            return sprintf('EPS AC charge limit [b] (est): %.1f %% (raw=%d)', $value / 10.0, $value);
+        }
+        if ($reg == 0x0044) {
+            return sprintf('Whole machine unused time (est): %d min (raw=%d)', $value, $value);
+        }
+        return '';
+    }
 
     if ($reg == 0x0038) {
         return sprintf('State of Charge (High Res): %.1f %% (raw=%d)', $value / 10.0, $value);
@@ -1037,17 +1082,6 @@ sub f1200_register_pretty {
         my $mode = $value == 1 ? '200W' : ($value == 2 ? '400W' : sprintf('unknown (0x%02X)', $value));
         return sprintf('Input power mode: %s (raw=%d)', $mode, $value);
     }
-    # 0x000C appears to be the energy-management discharge floor in percent.
-    # Observed app setting of 10%% maps to raw=9 in capture (possible +1 UI offset).
-    if ($reg == 0x000C) {
-        return sprintf('Energy mgmt discharge limit (est): %d %% (raw=%d)', $value, $value);
-    }
-    # 0x000E appears to be EPS AC charging limit in 0.1%% units.
-    # Observed 100%% as raw=1000.
-    if ($reg == 0x000E) {
-        return sprintf('EPS AC charge limit (est): %.1f %% (raw=%d)', $value / 10.0, $value);
-    }
-
     # 0x000F is the rear LED brightness/mode. Observed: 0 = off, 10 (0x0A) = on.
     if ($reg == 0x000F) {
         my $state = $value == 0 ? 'off' : sprintf('on (level=%d)', $value);
@@ -1079,21 +1113,6 @@ sub f1200_register_pretty {
         my $hours = int($value / 60);
         my $mins = $value % 60;
         return sprintf('Estimated full time: %dh %dm (%d min, raw=%d)', $hours, $mins, $value, $value);
-    }
-    # 0x003E is screen auto-shutdown timeout in seconds.
-    # Observed write for 3 min preset: reg 0x003E = 0x00B4 (180 sec).
-    if ($reg == 0x003E) {
-        my $mins = int($value / 60);
-        my $secs = $value % 60;
-        return sprintf('Screen shutdown timeout: %dm %02ds (%d sec, raw=%d)', $mins, $secs, $value, $value);
-    }
-    # 0x0042 appears to be max discharge limit in 0.1% units (provisional).
-    if ($reg == 0x0042) {
-        return sprintf('Max discharge limit (est): %.1f %% (raw=%d)', $value / 10.0, $value);
-    }
-    # 0x0043 appears to mirror EPS AC charging limit in 0.1%% units.
-    if ($reg == 0x0043) {
-        return sprintf('EPS AC charge limit [b] (est): %.1f %% (raw=%d)', $value / 10.0, $value);
     }
     # 0x003B is time remaining in minutes. Without load: ~4496 units = 3d 2h 56m.
     # With load, decreases proportionally. Jitters ±60 min due to AC ripple/estimation.
