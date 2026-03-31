@@ -929,6 +929,12 @@ sub f1200_register_pretty {
         return sprintf('State of Charge (High Res): %.1f %% (raw=%d)', $value / 10.0, $value);
     }
 
+    # 0x0002 is the input power level / output mode setting. Observed: 1 = 200W mode, 2 = 400W mode.
+    if ($reg == 0x0002) {
+        my $mode = $value == 1 ? '200W' : ($value == 2 ? '400W' : sprintf('unknown (0x%02X)', $value));
+        return sprintf('Input power mode: %s (raw=%d)', $mode, $value);
+    }
+
     # 0x000F is the rear LED brightness/mode. Observed: 0 = off, 10 (0x0A) = on.
     if ($reg == 0x000F) {
         my $state = $value == 0 ? 'off' : sprintf('on (level=%d)', $value);
@@ -983,6 +989,15 @@ sub f1200_register_pretty {
     # Both DC and USB enable produce raw=216 (2.16 A) for comparable loads.
     if ($reg == 0x002A) {
         return sprintf('DC bus output current: %.2f A (raw=%d)', $value / 100.0, $value);
+    }
+
+    # 0x0030 is a status/mode bitfield. Observed: 0x8000 (AC present), 0x4000 (Battery/Charging mode), 0x0000 (transition/idle).
+    if ($reg == 0x0030) {
+        my @flags;
+        push @flags, 'AC present' if $value & 0x8000;
+        push @flags, 'Charging mode' if $value & 0x4000;
+        my $desc = @flags ? join(', ', @flags) : 'idle/transition';
+        return sprintf('Status flags: %s (raw=0x%04X)', $desc, $value);
     }
 
     return '';
