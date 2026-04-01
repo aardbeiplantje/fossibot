@@ -1201,6 +1201,10 @@ sub print_f1200_decoded {
 
             my $r = $d->{register_words};
             my $base = $d->{start_register} // 0;
+            my %snap;
+            for my $i (0 .. $#$r) {
+                $snap{$base + $i} = $r->[$i];
+            }
 
             # NOTE: Offsets 3 (0x0003) and 6 (0x0006) are NOT SOC; they are power measurements:
             # 0x0003 = AC charging power (W), 0x0006 = AC input power total (W).
@@ -1211,7 +1215,7 @@ sub print_f1200_decoded {
                 next if $off < $base;
                 my $idx = $off - $base;
                 next if $idx < 0 || $idx > $#$r;
-                my $pretty = $self->f1200_register_pretty($off, $r->[$idx], $d->{register_kind});
+                my $pretty = $self->f1200_register_pretty($off, $r->[$idx], $d->{register_kind}, \%snap);
                 print "  Reg 0x" . sprintf('%04X', $off) . ":  $pretty\n" if length($pretty);
             }
         }
@@ -1227,7 +1231,7 @@ sub f1200_soc_percent {
 }
 
 sub f1200_register_pretty {
-    my ($self, $reg, $value, $reg_kind) = @_;
+    my ($self, $reg, $value, $reg_kind, $snapshot) = @_;
     return '' unless defined $reg && defined $value;
     $reg_kind = 'input' unless defined $reg_kind && length $reg_kind;
 
@@ -1463,10 +1467,26 @@ sub f1200_register_pretty {
         return sprintf('AC output voltage: %.1f V (raw=%d)', $value / 10.0, $value);
     }
     if ($reg == 0x0015) {
-        return sprintf('AC input voltage: %.1f V (raw=%d)', $value / 10.0, $value);
+        my $v = $value / 10.0;
+        my $ac_present = undef;
+        if (defined($snapshot) && ref($snapshot) eq 'HASH' && exists $snapshot->{0x0030}) {
+            $ac_present = ($snapshot->{0x0030} & 0x8000) ? 1 : 0;
+        }
+        if (defined($ac_present) && !$ac_present) {
+            return sprintf('AC input voltage: %.1f V (raw=%d, AC absent/transition; may be stale/noisy)', $v, $value);
+        }
+        return sprintf('AC input voltage: %.1f V (raw=%d)', $v, $value);
     }
     if ($reg == 0x0016) {
-        return sprintf('AC input frequency: %.2f Hz (raw=%d)', $value / 100.0, $value);
+        my $hz = $value / 100.0;
+        my $ac_present = undef;
+        if (defined($snapshot) && ref($snapshot) eq 'HASH' && exists $snapshot->{0x0030}) {
+            $ac_present = ($snapshot->{0x0030} & 0x8000) ? 1 : 0;
+        }
+        if (defined($ac_present) && !$ac_present) {
+            return sprintf('AC input frequency: %.2f Hz (raw=%d, AC absent/transition; may be stale/noisy)', $hz, $value);
+        }
+        return sprintf('AC input frequency: %.2f Hz (raw=%d)', $hz, $value);
     }
     # 0x0029 is aggregate output/convertor power in 0.01 W units.
     # Observed: DC enable adds a fixed baseline (e.g. 1152 -> 11.52 W),
