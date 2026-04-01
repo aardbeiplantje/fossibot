@@ -112,8 +112,8 @@ Registers have **context-dependent meanings** based on read type:
 |----------|-------|-------|
 | `0x0002` | Input power mode | `1` = 200 W, `2` = 400 W |
 | `0x0003` | AC charging power (W) | Power delivered to battery charger only |
+| `0x0004` | DC input power (W) | DC power from external source |
 | `0x0006` | AC input power total (W) | Mains draw = charging + DC output load |
-| `0x000E` | EPS AC charge limit (est) | 0.1% units (`1000` = 100.0%) |
 | `0x000F` | Rear LED brightness | `0` = off, `10` = on |
 | `0x0012` | AC output voltage (V) | Scale ÷ 10 |
 | `0x0014` | Total output power (W) | Matches app "Total Output" |
@@ -123,7 +123,7 @@ Registers have **context-dependent meanings** based on read type:
 | `0x001E` | USB output power (W) | Scale ÷ 10 |
 | `0x0027` | Total output power [b] (W) | Mirrors `0x0014` |
 | `0x0029` | Converter output power (W) | Scale ÷ 100; includes DC/USB converter overhead |
-| `0x002A` | DC bus | Bit `0x4000` = DC enabled; low 14 bits = current ÷ 100 (A) |
+| `0x002A` | DC bus config | Bit `0x4000` = DC enabled; low 14 bits = current ÷ 100 (A) |
 | `0x0030` | Status flags | Bit `0x8000` = AC present, bit `0x4000` = charging mode |
 | `0x0038` | State of Charge high-res (%) | SoC ×0.1% |
 | `0x003A` | Estimated time to full (min) | Counts down while charging |
@@ -134,17 +134,20 @@ Registers have **context-dependent meanings** based on read type:
 | Register | Label | Notes |
 |----------|-------|-------|
 | `0x0004-0x0007` | WiFi SSID / Password | 8 bytes total (4 bytes SSID + 4 bytes password), written via FC 0x07 |
-| `0x0014` | Max charging current | Setting in Amperes |
-| `0x0018` | USB output switch | Setting: `0` = off, `1` = on |
-| `0x001A` | AC output switch | Setting: `0` = off, `1` = on |
-| `0x001B` | LED light mode | Setting: `0` off, `1` always, `2` SOS, `3` flash |
 | `0x000C` | Energy mgmt discharge limit | Setting (%); App 10% observed as raw `9` (possible UI offset) |
 | `0x000E` | EPS AC charge limit | Setting, 0.1% units (`1000` = 100.0%) |
+| `0x0014` | Max charging current | Setting in Amperes |
+| `0x0018` | USB output switch | Setting: `0` = off, `1` = on |
+| `0x0019` | DC output switch | Setting: `0` = off, `1` = on |
+| `0x001A` | AC output switch | Setting: `0` = off, `1` = on |
+| `0x001B` | LED light mode | Setting: `0` off, `1` always, `2` SOS, `3` flash |
 | `0x0038` | Key sound toggle | Setting: `0` = off, `1` = on |
+| `0x0039` | AC silent charging | Setting: `0` = off, `1` = on |
 | `0x003B` | USB no-load standby time | Setting in minutes |
 | `0x003C` | AC no-load standby | Setting in minutes; `0` = never, `0x03C0` = 16h |
 | `0x003D` | DC no-load standby | Setting in minutes; `0` = never, `0x03C0` = 16h |
 | `0x003E` | Screen shutdown timeout | Setting in seconds (`0x00B4` = 180s = 3m) |
+| `0x003F` | Stop charge after | Setting in minutes |
 | `0x0042` | Max discharge limit | Setting, 0.1% units |
 | `0x0043` | EPS AC charge limit [b] | Mirror of `0x000E` |
 | `0x0044` | Whole machine unused time | Setting in minutes |
@@ -162,13 +165,15 @@ Discovered in full holding-register dump (frame 6940 of new.6.pcapng), fetched b
 | `0x0031` | Status flags [a] | Persistent status or error indicator (0x2000 in capture) |
 | `0x0032` | Status flags [b] | Persistent status or error indicator (0x1200 in capture) |
 | `0x0034` | Status flags [c] | Persistent status or error indicator (0x1300 in capture) |
-| `0x003F` | Device status [a] | Device status or error log (0xE007 in capture) |
 | `0x0040` | Device status [b] | Device status or error log (0x0800 in capture) |
 | `0x0045` | Event/error log [a] | Event or error history (0x8400 in capture) |
 | `0x0046` | Event/error log [b] | Event or error history (0x1E00 in capture) |
 
 > All register mappings were derived by live observation and diff analysis.
 > Some labels are provisional and may be refined with further testing.
+> 
+> **Correlation Source:** The Home Assistant integration in `ha-fossibot/` uses Modbus constants that were cross-referenced 
+> to verify and extend register mappings (e.g., `0x0019` DC output switch, `0x0039` AC silent charging, `0x003F` stop charge after).
 
 ---
 
