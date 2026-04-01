@@ -928,6 +928,34 @@ sub decode_f1200_payload {
         return $d;
     }
 
+    # FC07 = Read Exception / Diagnostics (vendor-specific, often test/diag commands)
+    if ($func == 0x07 && $len >= 5) {
+        $d->{message_type} = 'diagnostics-command';
+        my $sub_func = $bytes->[2] // 0;
+        $d->{sub_function} = $sub_func;
+        $d->{diag_data_len} = $len - 5;  # exclude slave, func, sub_func, CRC
+        
+        if ($d->{diag_data_len} > 0) {
+            my @data_bytes = @$bytes[3 .. $len - 3];
+            $d->{diag_data_raw} = \@data_bytes;
+            
+            # Try to decode as ASCII string
+            my $ascii = '';
+            my $all_printable = 1;
+            for my $b (@data_bytes) {
+                if ($b >= 32 && $b < 127) {
+                    $ascii .= chr($b);
+                } else {
+                    $all_printable = 0;
+                    $ascii .= sprintf('[%02X]', $b);
+                }
+            }
+            $d->{diag_ascii} = $ascii if $all_printable;
+            $d->{diag_hex} = join(' ', map { sprintf('%02X', $_) } @data_bytes);
+        }
+        return $d;
+    }
+
     $d->{message_type} = 'unknown';
 
     return $d;
@@ -969,6 +997,18 @@ sub print_f1200_decoded {
         }
         printf "  Start Reg:    0x%04X\n", $d->{start_register} if defined $d->{start_register};
         printf "  Reg Count:    %d\n", $d->{register_count} if defined $d->{register_count};
+    }
+
+    if ($d->{message_type} eq 'diagnostics-command') {
+        printf "  Sub-Function: 0x%02X\n", $d->{sub_function} if defined $d->{sub_function};
+        printf "  Diag Data:    %d bytes\n", $d->{diag_data_len} if defined $d->{diag_data_len};
+        if (defined $d->{diag_ascii} && length $d->{diag_ascii}) {
+            print "  ASCII:        $d->{diag_ascii}\n";
+        }
+        if (defined $d->{diag_hex}) {
+            print "  Hex:          $d->{diag_hex}\n";
+        }
+        return;
     }
 
     if ($d->{message_type} eq 'read-input-registers-tunneled-response') {

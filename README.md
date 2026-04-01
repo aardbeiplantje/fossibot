@@ -205,6 +205,29 @@ Discovered in full holding-register dump (frame 6940 of new.6.pcapng), fetched b
 
 ---
 
+## PCAPNG Capture Analysis
+
+Analyzed 8 captures (`change_screen_timeout.pcapng`, `new.*.pcapng`) totaling ~5.5 MB.
+
+### Function Codes Observed
+| FC | Name | Count | Details |
+|:---:|------|-------|---------|
+| **0x03** | Read Holding Registers | 63 | All: start=0x0000, count=80 (reads config) |
+| **0x04** | Read Input Registers | 41 | All: start=0x0000, count=80 (reads telemetry) |
+| **0x06** | Write Single Register | 11 | Writes to device config (0x0014, 0x0018, 0x001A, 0x001B, 0x0038, 0x003B, 0x003D, 0x003E) |
+| **0x07** | Diagnostics/Test | 2 | ASCII payloads: `TESTTAST`, `TUSTTOST` (device test/diag commands) |
+
+### Register Coverage
+- **Read span**: All captures consistently read 0x0000..0x004F (80 registers)
+- **Implementation**: 44 registers have explicit labels in decoder
+- **Candidate gaps**: 36 registers unlabeled (0x0000, 0x0005, 0x0007–0x000B, 0x0011, 0x0017, 0x001C–0x001F, 0x0020–0x0026, 0x0028, 0x002C–0x002F, 0x0033, 0x0036, 0x0041, 0x0047–0x004F)
+
+### New Findings
+- **FC07 Decoder**: Added support for reading Modbus diagnostics/test function (0x07). Captures ASCII diagnostic commands that appear to be device self-tests.
+- **Write Register Map**: All 8 writable configuration registers are already labeled with meanings (USB output, DC output, AC output, LED mode, sound, time configs).
+
+---
+
 ## License
 
 See [LICENSE](LICENSE).
