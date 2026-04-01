@@ -1030,11 +1030,15 @@ sub f1200_register_pretty {
         }
         if ($reg == 0x0018) {
             my $state = $value ? 'on' : 'off';
-            return sprintf('USB output switch (est): %s (raw=%d)', $state, $value);
+            return sprintf('USB output switch: %s (raw=%d)', $state, $value);
+        }
+        if ($reg == 0x0019) {
+            my $state = $value ? 'on' : 'off';
+            return sprintf('DC output switch: %s (raw=%d)', $state, $value);
         }
         if ($reg == 0x001A) {
             my $state = $value ? 'on' : 'off';
-            return sprintf('AC output switch (est): %s (raw=%d)', $state, $value);
+            return sprintf('AC output switch: %s (raw=%d)', $state, $value);
         }
         if ($reg == 0x001B) {
             my $mode = $value == 0 ? 'off' : ($value == 1 ? 'always on' : ($value == 2 ? 'SOS' : ($value == 3 ? 'flash' : sprintf('unknown (%d)', $value))));
@@ -1072,6 +1076,13 @@ sub f1200_register_pretty {
             my $mins = int($value / 60);
             my $secs = $value % 60;
             return sprintf('Screen shutdown timeout: %dm %02ds (%d sec, raw=%d)', $mins, $secs, $value, $value);
+        }
+        if ($reg == 0x003F) {
+            return sprintf('Stop charge after: %d min (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0039) {
+            my $state = $value ? 'on' : 'off';
+            return sprintf('AC silent charging: %s (raw=%d)', $state, $value);
         }
         if ($reg == 0x0042) {
             return sprintf('Max discharge limit (est): %.1f %% (raw=%d)', $value / 10.0, $value);
@@ -1128,9 +1139,6 @@ sub f1200_register_pretty {
         if ($reg == 0x003A) {
             return sprintf('Time/countdown config: 0x%04X (raw=%d)', $value, $value);
         }
-        if ($reg == 0x003F) {
-            return sprintf('Device status [a]: 0x%04X (raw=%d)', $value, $value);
-        }
         if ($reg == 0x0040) {
             return sprintf('Device status [b]: 0x%04X (raw=%d)', $value, $value);
         }
@@ -1150,6 +1158,10 @@ sub f1200_register_pretty {
     # 0x0003 = AC input power to battery charger (W). Equals 0x0006 when no DC load is active.
     if ($reg == 0x0003) {
         return sprintf('AC charging power: %d W (raw=%d)', $value, $value);
+    }
+    # 0x0004 is DC input power (W)
+    if ($reg == 0x0004) {
+        return sprintf('DC input power: %d W (raw=%d)', $value, $value);
     }
     # 0x0006 = Total AC input power from mains (W) = 0x0003 + DC output power (0x0014).
     # Confirmed: with 26W DC load, 0x0006=128, 0x0003=102, 0x0014=26.
