@@ -114,18 +114,22 @@ Registers have **context-dependent meanings** based on read type:
 | `0x0003` | AC charging power (W) | Power delivered to battery charger only |
 | `0x0004` | DC input power (W) | DC power from external source |
 | `0x0006` | AC input power total (W) | Mains draw = charging + DC output load |
+| `0x000D` | AC charging rate (W) | AC power to battery from mains |
 | `0x000F` | Rear LED brightness | `0` = off, `10` = on |
 | `0x0012` | AC output voltage (V) | Scale ÷ 10 |
+| `0x0013` | AC output frequency (Hz) | Scale ÷ 10 |
 | `0x0014` | Total output power (W) | Matches app "Total Output" |
 | `0x0015` | AC input voltage (V) | Scale ÷ 10 |
 | `0x0016` | AC input frequency (Hz) | Scale ÷ 100 |
 | `0x0019` | Rear LED mode | `0` = off, `1` = solid, `2` = SOS, `3` = flashing |
 | `0x001E` | USB output power (W) | Scale ÷ 10 |
 | `0x0027` | Total output power [b] (W) | Mirrors `0x0014` |
-| `0x0029` | Converter output power (W) | Scale ÷ 100; includes DC/USB converter overhead |
+| `0x0029` | Active output list | Bit-parsed: USB, DC, AC, LED active states |
 | `0x002A` | DC bus config | Bit `0x4000` = DC enabled; low 14 bits = current ÷ 100 (A) |
 | `0x0030` | Status flags | Bit `0x8000` = AC present, bit `0x4000` = charging mode |
-| `0x0038` | State of Charge high-res (%) | SoC ×0.1% |
+| `0x0035` | State of Charge Slave 1 (%) | Scale ÷ 10, subtract 0.1 |
+| `0x0037` | State of Charge Slave 2 (%) | Scale ÷ 10, subtract 0.1 |
+| `0x0038` | State of Charge high-res (%) | Scale ÷ 10 |
 | `0x003A` | Estimated time to full (min) | Counts down while charging |
 | `0x003B` | Time remaining (min) | Discharge time estimate |
 
@@ -172,8 +176,12 @@ Discovered in full holding-register dump (frame 6940 of new.6.pcapng), fetched b
 > All register mappings were derived by live observation and diff analysis.
 > Some labels are provisional and may be refined with further testing.
 > 
-> **Correlation Source:** The Home Assistant integration in `ha-fossibot/` uses Modbus constants that were cross-referenced 
-> to verify and extend register mappings (e.g., `0x0019` DC output switch, `0x0039` AC silent charging, `0x003F` stop charge after).
+> **Correlation & Verification:** The Home Assistant integration in `ha-fossibot/custom_components/fossibot-ha/sydpower/modbus.py` 
+> was used to cross-verify register mappings against HA's `parse_registers()` function. Critical fixes applied:
+> - Fixed SOC formula: now ÷10 (was ÷2, incorrect)
+> - Added `0x000D` (AC charging rate) and `0x0013` (AC output frequency) 
+> - Corrected `0x0029` from "Converter power" to "Active output list" (bit-parsed)
+> - Added `0x0035` (SOC Slave 1) and `0x0037` (SOC Slave 2)
 
 ---
 

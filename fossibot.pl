@@ -985,15 +985,9 @@ sub print_f1200_decoded {
             my $r = $d->{register_words};
             my $base = $d->{start_register} // 0;
 
-            # SOC conversion inferred from observed values: register value appears to be 0.5% units.
-            for my $off (3, 6) {
-                next unless $off <= $#$r;
-                my $reg = $base + $off;
-                my $raw = $r->[$off];
-                my $soc = $self->f1200_soc_percent($raw);
-                next unless defined $soc;
-                printf "  SOC 0x%04X:   %.1f %% (raw=%d)\n", $reg, $soc, $raw;
-            }
+            # NOTE: Offsets 3 (0x0003) and 6 (0x0006) are NOT SOC; they are power measurements:
+            # 0x0003 = AC charging power (W), 0x0006 = AC input power total (W).
+            # The actual SOC register is 0x0038 (handled below).
 
             # Additional likely engineering values seen changing in live diff mode.
             for my $off (0x0014, 0x001E, 0x0027, 0x0038, 0x003A, 0x003B, 0x003E, 0x0012, 0x0015, 0x0016, 0x0029, 0x002A) {
@@ -1011,7 +1005,8 @@ sub print_f1200_decoded {
 sub f1200_soc_percent {
     my ($self, $raw) = @_;
     return undef unless defined $raw;
-    return $raw / 2.0;
+    # HA formula: registers[56] / 1000 * 100 = direct percentage
+    return $raw / 10.0;
 }
 
 sub f1200_register_pretty {
@@ -1175,9 +1170,17 @@ sub f1200_register_pretty {
         return sprintf('Input power mode: %s (raw=%d)', $mode, $value);
     }
     # 0x000F is the rear LED brightness/mode. Observed: 0 = off, 10 (0x0A) = on.
+    # 0x000D is AC charging rate (W) from mains to battery charger.
+    if ($reg == 0x000D) {
+        return sprintf('AC charging rate: %d W (raw=%d)', $value, $value);
+    }
     if ($reg == 0x000F) {
         my $state = $value == 0 ? 'off' : sprintf('on (level=%d)', $value);
         return sprintf('Rear LED brightness: %s (raw=%d)', $state, $value);
+    }
+    # 0x0013 is AC output frequency in 0.1 Hz units (from HA: inputs[19] / 10).
+    if ($reg == 0x0013) {
+        return sprintf('AC output frequency: %.1f Hz (raw=%d)', $value / 10.0, $value);
     }
     # 0x0019 is the rear LED mode. Observed: 0 = off, 1 = solid on, 2 = SOS flashing, 3 = flashing.
     if ($reg == 0x0019) {
@@ -1198,6 +1201,28 @@ sub f1200_register_pretty {
     # 0x0027 = Total output power (W), appears to mirror 0x0014 in all observed cases.
     if ($reg == 0x0027) {
         return sprintf('Total output power [b]: %d W (raw=%d)', $value, $value);
+    }
+    # 0x0029 is the active output list from the HA component (parsed as binary for outputs).
+    # From HA parse_registers(): extracts USB, DC, AC, LED output state from bit positions.
+    if ($reg == 0x0029) {
+        my $binary_str = sprintf('%016b', $value);
+        my @outputs;
+        push @outputs, 'USB' if substr($binary_str, 6, 1) eq '1';
+        push @outputs, 'DC' if substr($binary_str, 5, 1) eq '1';
+        push @outputs, 'AC' if substr($binary_str, 4, 1) eq '1';
+        push @outputs, 'LED' if substr($binary_str, 3, 1) eq '1';
+        my $state = @outputs ? join('+', @outputs) : 'all off';
+        return sprintf('Active output list: %s (raw=0x%04X bits=%s)', $state, $value, $binary_str);
+    }
+    # 0x0035 (53) is State of Charge for Slave 1 device: (raw / 1000 * 100) - 1
+    if ($reg == 0x0035) {
+        my $soc = ($value / 10.0) - 0.1;
+        return sprintf('SOC Slave 1: %.1f %% (raw=%d)', $soc, $value);
+    }
+    # 0x0037 (55) is State of Charge for Slave 2 device: (raw / 1000 * 100) - 1
+    if ($reg == 0x0037) {
+        my $soc = ($value / 10.0) - 0.1;
+        return sprintf('SOC Slave 2: %.1f %% (raw=%d)', $soc, $value);
     }
     # 0x003A appears to track estimated time-to-full while charging.
     # Observed to ramp down during AC charging (e.g. 374 -> ... -> 17 at high SoC).
@@ -1228,9 +1253,7 @@ sub f1200_register_pretty {
     # 0x0029 is aggregate output/convertor power in 0.01 W units.
     # Observed: DC enable adds a fixed baseline (e.g. 1152 -> 11.52 W),
     # and enabling USB increases it further (e.g. +512 -> +5.12 W).
-    if ($reg == 0x0029) {
-        return sprintf('Output power: %.2f W (raw=%d)', $value / 100.0, $value);
-    }
+
     # 0x002A is a mixed flag/current register.
     # Observed: 0x4000 toggles with DC output enable; low 14 bits carry current in 0.01 A units.
     if ($reg == 0x002A) {
