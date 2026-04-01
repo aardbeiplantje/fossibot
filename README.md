@@ -39,10 +39,10 @@ over-BLE protocol.
 | `--write-req-handle H --write-hex BYTES` | Write bytes using ATT Write Request |
 | `--write-cmd-handle H --write-hex BYTES` | Write bytes using ATT Write Command |
 | `--subscribe-handle H` | Enable CCCD notifications on handle H |
-| `--listen` | Print raw notifications for `--listen-sec` seconds |
-| `--f1200-poll` | Single Modbus register snapshot, decoded |
-| `--f1200-stream` | Repeated polls + decoded output for `--listen-sec` |
-| `--f1200-diff` | Continuous polling; print only registers that changed, with labels |
+| `--listen` | Print raw notifications for `--listen-sec` seconds (`0` = indefinite) |
+| `--f1200-poll` | Single Modbus register snapshot, decoded (`--listen-sec 0` = poll indefinitely) |
+| `--f1200-stream` | Repeated polls + decoded output for `--listen-sec` (`0` = indefinite) |
+| `--f1200-diff` | Continuous polling; print only registers that changed, with labels (`--listen-sec 0` = indefinite) |
 | `--f1200-query [REG[-REG]]` | Ad-hoc read of a specific register or range, printed with labels |
 
 ---
@@ -55,7 +55,7 @@ over-BLE protocol.
 | `--connect-timeout SEC` | `6` | Connection timeout in seconds |
 | `--mtu N` | `160` | ATT MTU (23–517) |
 | `--response-timeout-ms N` | `2500` | Timeout for ATT request/response |
-| `--listen-sec SEC` | `10` | Duration for `--listen`, `--f1200-stream`, `--f1200-diff` |
+| `--listen-sec SEC` | `10` | Duration for `--listen`, `--f1200-stream`, `--f1200-diff`; set `0` to run indefinitely |
 | `--f1200-interval-ms N` | `1000` | Poll interval for `--f1200-diff` |
 | `--f1200-diff-csv PATH` | — | Write changed-register events to a CSV file |
 | `--f1200-raw` | — | Also print raw hex notification bytes with poll/stream |
@@ -96,6 +96,12 @@ over-BLE protocol.
 
 # Stream decoded output for 60 seconds
 ./fossibot.pl -d 08:92:72:0D:93:C6 --f1200-stream --listen-sec 60
+
+# Poll indefinitely (Ctrl+C to stop)
+./fossibot.pl -d 08:92:72:0D:93:C6 --f1200-poll --listen-sec 0
+
+# Diff indefinitely (Ctrl+C to stop)
+./fossibot.pl -d 08:92:72:0D:93:C6 --f1200-diff --listen-sec 0
 ```
 
 ---

@@ -91,8 +91,8 @@ if ($opts{response_timeout_ms} < 100 || $opts{response_timeout_ms} > 30000) {
     print STDERR "Error: --response-timeout-ms must be in 100..30000\n";
     exit 1;
 }
-if ($opts{listen_sec} <= 0 || $opts{listen_sec} > 3600) {
-    print STDERR "Error: --listen-sec must be >0 and <=3600\n";
+if ($opts{listen_sec} < 0 || $opts{listen_sec} > 3600) {
+    print STDERR "Error: --listen-sec must be >=0 and <=3600 (0 means run indefinitely)\n";
     exit 1;
 }
 if (defined($opts{f1200_interval_ms}) && ($opts{f1200_interval_ms} < 100 || $opts{f1200_interval_ms} > 10000)) {
@@ -366,17 +366,24 @@ sub run {
         if (!$ok) {
             print STDERR "ERROR: F1200 poll setup failed (CCCD write)\n";
         } else {
-            my $rsp = $self->f1200_request_status();
-            if ($rsp) {
-                printf "F1200 poll rsp (0x%04X)\n", $rsp->{handle};
-                if (defined $rsp->{expected_len} && !$rsp->{complete}) {
-                    printf "Note:         partial frame (%d/%d bytes), waiting window may be too short\n",
-                        scalar(@{$rsp->{value}}), $rsp->{expected_len};
+            my $run_forever = $self->{listen_sec} == 0;
+            my $end = $run_forever ? undef : (time() + $self->{listen_sec});
+            print "F1200 poll:   running indefinitely (Ctrl+C to stop)\n" if $run_forever;
+            while ($run_forever || time() < $end) {
+                my $rsp = $self->f1200_request_status();
+                if ($rsp) {
+                    printf "F1200 poll rsp (0x%04X)\n", $rsp->{handle};
+                    if (defined $rsp->{expected_len} && !$rsp->{complete}) {
+                        printf "Note:         partial frame (%d/%d bytes), waiting window may be too short\n",
+                            scalar(@{$rsp->{value}}), $rsp->{expected_len};
+                    }
+                    $self->print_f1200_decoded($rsp->{value});
+                    printf "Raw:          %s\n", hex_bytes($rsp->{value}) if $self->{f1200_raw};
+                } else {
+                    print STDERR "ERROR: F1200 poll timed out waiting for notification\n";
                 }
-                $self->print_f1200_decoded($rsp->{value});
-                printf "Raw:          %s\n", hex_bytes($rsp->{value}) if $self->{f1200_raw};
-            } else {
-                print STDERR "ERROR: F1200 poll timed out waiting for notification\n";
+                last unless $run_forever;
+                select(undef, undef, undef, $self->{f1200_interval_sec});
             }
         }
     }
@@ -386,9 +393,11 @@ sub run {
         if (!$ok) {
             print STDERR "ERROR: F1200 stream setup failed (CCCD write)\n";
         } else {
-            my $end = time() + $self->{listen_sec};
+            my $run_forever = $self->{listen_sec} == 0;
+            my $end = $run_forever ? undef : (time() + $self->{listen_sec});
             print "F1200 stream: polling and waiting for notifications\n";
-            while (time() < $end) {
+            print "F1200 stream: running indefinitely (Ctrl+C to stop)\n" if $run_forever;
+            while ($run_forever || time() < $end) {
                 my $rsp = $self->f1200_request_status();
                 if ($rsp) {
                     printf "F1200 notify (0x%04X)\n", $rsp->{handle};
@@ -419,10 +428,12 @@ sub run {
                 }
             }
 
-            my $end = time() + $self->{listen_sec};
+            my $run_forever = $self->{listen_sec} == 0;
+            my $end = $run_forever ? undef : (time() + $self->{listen_sec});
             my $prev;
             print "F1200 diff:   tracking changed registers\n";
-            while (time() < $end) {
+            print "F1200 diff:   running indefinitely (Ctrl+C to stop)\n" if $run_forever;
+            while ($run_forever || time() < $end) {
                 my $rsp = $self->f1200_request_status();
                 if ($rsp) {
                     my $snap = $self->extract_modbus_register_snapshot($rsp->{value});
@@ -1398,11 +1409,11 @@ Actions (defaults to --info):
     --write-req-handle H --write-hex BYTES  Write with ATT Write Request
     --write-cmd-handle H --write-hex BYTES  Write with ATT Write Command
     --subscribe-handle H    Enable notify on H by writing 0x0001 to H+1 (CCCD)
-    --listen        Print notifications for --listen-sec seconds
+    --listen        Print notifications for --listen-sec seconds (0 = indefinite)
     --notify-handle H       Filter --listen to notifications from handle H
-    --f1200-poll    Capture-based F1200 status poll (write 0x0036, notify 0x0038)
-    --f1200-stream  Repeated F1200 status polling + notifications for --listen-sec
-    --f1200-diff    Show only changed Modbus registers over time
+    --f1200-poll    Capture-based F1200 status poll (0 listen-sec = poll indefinitely)
+    --f1200-stream  Repeated F1200 status polling + notifications for --listen-sec (0 = indefinite)
+    --f1200-diff    Show only changed Modbus registers over time (0 listen-sec = indefinite)
     --f1200-query [REG[-REG]]  Read specific register(s) once and print with labels
                     REG is hex (0x0003) or decimal. Defaults to full 0x0000-0x004F range.
     --f1200-raw     With F1200 poll/stream, also print raw hex notification
@@ -1417,7 +1428,7 @@ Options:
   --mtu N                 ATT MTU request size (23..517, default: 160)
     --service-uuid UUID     Filter --chars to one service UUID
     --response-timeout-ms N Timeout for ATT req/rsp operations (default: 2500)
-    --listen-sec SEC        Notification listen duration (default: 10)
+    --listen-sec SEC        Notification listen duration (default: 10, 0 = indefinite)
     --f1200-interval-ms N   Poll interval for --f1200-diff (default: 1000)
     --f1200-diff-csv PATH   Write changed-register events to CSV
     --write-hex BYTES       Hex bytes e.g. "AA BB 01 02" or "AABB0102"
