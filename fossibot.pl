@@ -1313,13 +1313,14 @@ sub f1200_register_pretty {
             return sprintf('Firmware/feature info: 0x%04X (raw=%d)', $value, $value);
         }
         if ($reg == 0x0010) {
-            return sprintf('Power config [a]: 0x%04X (%d mW?, raw=%d)', $value, $value, $value);
+            return sprintf('Config [0x0010] (unknown scale): raw=%d (0x%04X)', $value, $value);
         }
         if ($reg == 0x0012) {
-            return sprintf('Power config [b]: 0x%04X (%d mW?, raw=%d)', $value, $value, $value);
+            # Observed: 115 ~= 11.5 in some 0.1-unit scale; exact meaning unconfirmed
+            return sprintf('Config [0x0012] (unknown scale, maybe %.1f in 0.1-units): raw=%d', $value / 10.0, $value);
         }
         if ($reg == 0x0013) {
-            return sprintf('Power config [c]: 0x%04X (%d mW?, raw=%d)', $value, $value, $value);
+            return sprintf('Config [0x0013] (unknown scale): raw=%d (0x%04X)', $value, $value);
         }
         if ($reg == 0x0015) {
             return sprintf('AC config [a]: 0x%04X (raw=%d)', $value, $value);
