@@ -1020,6 +1020,14 @@ sub f1200_register_pretty {
     $reg_kind = 'input' unless defined $reg_kind && length $reg_kind;
 
     if ($reg_kind eq 'holding') {
+        if ($reg >= 0x0004 && $reg <= 0x0007) {
+            my $high = ($value >> 8) & 0xFF;
+            my $low = $value & 0xFF;
+            my $char_hi = ($high >= 32 && $high < 127) ? chr($high) : '?';
+            my $char_lo = ($low >= 32 && $low < 127) ? chr($low) : '?';
+            my $label = $reg == 0x0004 ? 'WiFi SSID/Password' : 'WiFi SSID/Password (cont)';
+            return sprintf('%s: 0x%04X (ASCII: %s%s, raw=%d)', $label, $value, $char_hi, $char_lo, $value);
+        }
         if ($reg == 0x0018) {
             my $state = $value ? 'on' : 'off';
             return sprintf('USB output switch (est): %s (raw=%d)', $state, $value);
@@ -1073,6 +1081,64 @@ sub f1200_register_pretty {
         }
         if ($reg == 0x0044) {
             return sprintf('Whole machine unused time (est): %d min (raw=%d)', $value, $value);
+        }
+        # Unmapped device config registers (likely fetched at app startup)
+        if ($reg == 0x0001) {
+            return sprintf('Device model/mode info: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x000F) {
+            return sprintf('Firmware/feature info: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0010) {
+            return sprintf('Power config [a]: 0x%04X (%d mW?, raw=%d)', $value, $value, $value);
+        }
+        if ($reg == 0x0012) {
+            return sprintf('Power config [b]: 0x%04X (%d mW?, raw=%d)', $value, $value, $value);
+        }
+        if ($reg == 0x0013) {
+            return sprintf('Power config [c]: 0x%04X (%d mW?, raw=%d)', $value, $value, $value);
+        }
+        if ($reg == 0x0015) {
+            return sprintf('AC config [a]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0016) {
+            return sprintf('AC config [b]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0027) {
+            return sprintf('Output config [a]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0029) {
+            return sprintf('Converter info: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x002A) {
+            return sprintf('DC bus config: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x002B) {
+            return sprintf('Output config [b]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0031) {
+            return sprintf('Status flags [a]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0032) {
+            return sprintf('Status flags [b]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0034) {
+            return sprintf('Status flags [c]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x003A) {
+            return sprintf('Time/countdown config: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x003F) {
+            return sprintf('Device status [a]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0040) {
+            return sprintf('Device status [b]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0045) {
+            return sprintf('Event/error log [a]: 0x%04X (raw=%d)', $value, $value);
+        }
+        if ($reg == 0x0046) {
+            return sprintf('Event/error log [b]: 0x%04X (raw=%d)', $value, $value);
         }
         return '';
     }
