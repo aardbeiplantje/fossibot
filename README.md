@@ -44,6 +44,18 @@ over-BLE protocol.
 | `--f1200-stream` | Repeated polls + decoded output for `--listen-sec` (`0` = indefinite) |
 | `--f1200-diff` | Continuous polling; print only registers that changed, with labels (`--listen-sec 0` = indefinite) |
 | `--f1200-query [REG[-REG]]` | Ad-hoc read of a specific register or range, printed with labels |
+| `--set-screen-timeout=SEC` | Set screen timeout in seconds (register `0x003E`) |
+| `--set-usb-output=on|off` | Toggle USB output switch (register `0x0018`) |
+| `--set-dc-output=on|off` | Toggle DC output switch (register `0x0019`) |
+| `--set-ac-output=on|off` | Toggle AC output switch (register `0x001A`) |
+| `--set-led-mode=off|on|sos|flash` | Set rear LED mode (register `0x001B`) |
+| `--set-key-sound=on|off` | Toggle key sound (register `0x0038`) |
+| `--set-ac-silent-charging=on|off` | Toggle AC silent charging (register `0x0039`) |
+| `--set-usb-standby-min=MIN` | Set USB no-load standby time in minutes (register `0x003B`) |
+| `--set-ac-standby-min=MIN` | Set AC no-load standby time in minutes (register `0x003C`) |
+| `--set-dc-standby-min=MIN` | Set DC no-load standby time in minutes (register `0x003D`) |
+| `--set-stop-charge-after-min=MIN` | Set stop-charge-after timer in minutes (register `0x003F`) |
+| `--f1200-write REG=VALUE` | Legacy direct register write (still supported) |
 
 ---
 
@@ -58,6 +70,7 @@ over-BLE protocol.
 | `--listen-sec SEC` | `10` | Duration for `--listen`, `--f1200-stream`, `--f1200-diff`; set `0` to run indefinitely |
 | `--f1200-interval-ms N` | `1000` | Poll interval for `--f1200-diff` |
 | `--f1200-diff-csv PATH` | — | Write changed-register events to a CSV file |
+| `--set-screen-timeout=SEC` | — | Key-based settings write (recommended) |
 | `--f1200-raw` | — | Also print raw hex notification bytes with poll/stream |
 | `--service-uuid UUID` | — | Filter `--chars` to a specific service UUID |
 | `--notify-handle H` | — | Filter `--listen` to a specific notification handle |
@@ -87,6 +100,15 @@ over-BLE protocol.
 
 # Read a register range
 ./fossibot.pl -d 08:92:72:0D:93:C6 --f1200-query 0x0000-0x000F
+
+# Set screen timeout to 180 seconds
+./fossibot.pl -d 08:92:72:0D:93:C6 --set-screen-timeout=180
+
+# Toggle outputs and sound with key-based options
+./fossibot.pl -d 08:92:72:0D:93:C6 --set-ac-output=on --set-dc-output=on --set-key-sound=off
+
+# Legacy raw register write (still supported)
+./fossibot.pl -d 08:92:72:0D:93:C6 --f1200-write 0x003E=180
 
 # Read WiFi credentials (FC03 holding registers)
 ./fossibot.pl -d 08:92:72:0D:93:C6 --f1200-query 0x0004-0x0007

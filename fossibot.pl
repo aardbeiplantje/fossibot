@@ -38,6 +38,10 @@ my ($do_f1200_poll, $do_f1200_stream, $do_f1200_diff) = (0, 0, 0);
 my $f1200_raw = 0;
 my $f1200_diff_csv;
 my $f1200_query;
+my $f1200_write;
+my ($set_usb_output, $set_dc_output, $set_ac_output, $set_led_mode);
+my ($set_key_sound, $set_ac_silent_charging);
+my ($set_screen_timeout, $set_usb_standby_min, $set_ac_standby_min, $set_dc_standby_min, $set_stop_charge_after_min);
 
 GetOptions(
     'device|d=s'        => \$opts{device},
@@ -65,6 +69,18 @@ GetOptions(
     'f1200-raw'         => \$f1200_raw,
     'f1200-diff-csv=s'  => \$f1200_diff_csv,
     'f1200-query:s'     => \$f1200_query,
+    'f1200-write=s'     => \$f1200_write,
+    'set-usb-output=s'  => \$set_usb_output,
+    'set-dc-output=s'   => \$set_dc_output,
+    'set-ac-output=s'   => \$set_ac_output,
+    'set-led-mode=s'    => \$set_led_mode,
+    'set-key-sound=s'   => \$set_key_sound,
+    'set-ac-silent-charging=s' => \$set_ac_silent_charging,
+    'set-screen-timeout=i' => \$set_screen_timeout,
+    'set-usb-standby-min=i' => \$set_usb_standby_min,
+    'set-ac-standby-min=i' => \$set_ac_standby_min,
+    'set-dc-standby-min=i' => \$set_dc_standby_min,
+    'set-stop-charge-after-min=i' => \$set_stop_charge_after_min,
     'info'              => \$do_info,
     'debug|v+'          => \$opts{debug},
     'help|h'            => sub { print_usage(); exit 0; },
@@ -130,9 +146,81 @@ if (defined $write_req_handle && defined $write_cmd_handle) {
     exit 1;
 }
 
+my ($f1200_write_reg, $f1200_write_val);
+if (defined $f1200_write) {
+    if ($f1200_write =~ /^\s*(0x[0-9A-Fa-f]{1,4}|\d{1,5})\s*(?:=|:|,)\s*(0x[0-9A-Fa-f]{1,4}|\d{1,5})\s*$/) {
+        $f1200_write_reg = parse_u16($1);
+        $f1200_write_val = parse_u16($2);
+    }
+    if (!defined($f1200_write_reg) || !defined($f1200_write_val)) {
+        print STDERR "Error: --f1200-write must be REG=VALUE using hex or decimal, each in 0..65535\n";
+        print STDERR "       Example: --f1200-write 0x003E=180\n";
+        exit 1;
+    }
+}
+
+my @f1200_set_writes;
+if (defined $set_usb_output) {
+    my $v = parse_on_off($set_usb_output);
+    defined($v) or do { print STDERR "Error: --set-usb-output expects on/off/1/0\n"; exit 1; };
+    push @f1200_set_writes, { key => 'usb-output', reg => 0x0018, value => $v };
+}
+if (defined $set_dc_output) {
+    my $v = parse_on_off($set_dc_output);
+    defined($v) or do { print STDERR "Error: --set-dc-output expects on/off/1/0\n"; exit 1; };
+    push @f1200_set_writes, { key => 'dc-output', reg => 0x0019, value => $v };
+}
+if (defined $set_ac_output) {
+    my $v = parse_on_off($set_ac_output);
+    defined($v) or do { print STDERR "Error: --set-ac-output expects on/off/1/0\n"; exit 1; };
+    push @f1200_set_writes, { key => 'ac-output', reg => 0x001A, value => $v };
+}
+if (defined $set_led_mode) {
+    my $v = parse_led_mode($set_led_mode);
+    defined($v) or do { print STDERR "Error: --set-led-mode expects off|on|sos|flash or 0..3\n"; exit 1; };
+    push @f1200_set_writes, { key => 'led-mode', reg => 0x001B, value => $v };
+}
+if (defined $set_key_sound) {
+    my $v = parse_on_off($set_key_sound);
+    defined($v) or do { print STDERR "Error: --set-key-sound expects on/off/1/0\n"; exit 1; };
+    push @f1200_set_writes, { key => 'key-sound', reg => 0x0038, value => $v };
+}
+if (defined $set_ac_silent_charging) {
+    my $v = parse_on_off($set_ac_silent_charging);
+    defined($v) or do { print STDERR "Error: --set-ac-silent-charging expects on/off/1/0\n"; exit 1; };
+    push @f1200_set_writes, { key => 'ac-silent-charging', reg => 0x0039, value => $v };
+}
+if (defined $set_screen_timeout) {
+    ($set_screen_timeout >= 0 && $set_screen_timeout <= 65535)
+        or do { print STDERR "Error: --set-screen-timeout must be in 0..65535 (seconds)\n"; exit 1; };
+    push @f1200_set_writes, { key => 'screen-timeout', reg => 0x003E, value => int($set_screen_timeout) };
+}
+if (defined $set_usb_standby_min) {
+    ($set_usb_standby_min >= 0 && $set_usb_standby_min <= 65535)
+        or do { print STDERR "Error: --set-usb-standby-min must be in 0..65535\n"; exit 1; };
+    push @f1200_set_writes, { key => 'usb-standby-min', reg => 0x003B, value => int($set_usb_standby_min) };
+}
+if (defined $set_ac_standby_min) {
+    ($set_ac_standby_min >= 0 && $set_ac_standby_min <= 65535)
+        or do { print STDERR "Error: --set-ac-standby-min must be in 0..65535\n"; exit 1; };
+    push @f1200_set_writes, { key => 'ac-standby-min', reg => 0x003C, value => int($set_ac_standby_min) };
+}
+if (defined $set_dc_standby_min) {
+    ($set_dc_standby_min >= 0 && $set_dc_standby_min <= 65535)
+        or do { print STDERR "Error: --set-dc-standby-min must be in 0..65535\n"; exit 1; };
+    push @f1200_set_writes, { key => 'dc-standby-min', reg => 0x003D, value => int($set_dc_standby_min) };
+}
+if (defined $set_stop_charge_after_min) {
+    ($set_stop_charge_after_min >= 0 && $set_stop_charge_after_min <= 65535)
+        or do { print STDERR "Error: --set-stop-charge-after-min must be in 0..65535\n"; exit 1; };
+    push @f1200_set_writes, { key => 'stop-charge-after-min', reg => 0x003F, value => int($set_stop_charge_after_min) };
+}
+
 # Default: behave like --info if no action was requested.
 if (!$do_connect && !$do_name && !$do_services && !$do_info && !$do_chars && !$do_listen
     && !$do_f1200_poll && !$do_f1200_stream && !$do_f1200_diff && !defined($f1200_query)
+    && !defined($f1200_write_reg)
+    && !@f1200_set_writes
     && !defined($read_handle) && !defined($write_req_handle) && !defined($write_cmd_handle)
     && !defined($subscribe_handle)) {
     $do_info = 1;
@@ -158,6 +246,9 @@ exit $f1200->run(
     f1200_raw => $f1200_raw,
     f1200_diff_csv => $f1200_diff_csv,
     f1200_query => $f1200_query,
+    f1200_write_reg => $f1200_write_reg,
+    f1200_write_val => $f1200_write_val,
+    f1200_set_writes => \@f1200_set_writes,
     info     => $do_info,
 );
 
@@ -357,6 +448,69 @@ sub run {
                         print STDERR "ERROR: F1200 query timed out\n";
                     }
                 }
+            }
+        }
+    }
+
+    if (defined $todo{f1200_write_reg} && defined $todo{f1200_write_val}) {
+        my $reg = $todo{f1200_write_reg};
+        my $val = $todo{f1200_write_val};
+        my $ok = $self->f1200_enable_notifications();
+        if (!$ok) {
+            print STDERR "ERROR: F1200 write setup failed (CCCD write)\n";
+        } else {
+            my $sent = $self->f1200_send_write_single($reg, $val);
+            if (!$sent) {
+                printf STDERR "ERROR: F1200 write failed for reg 0x%04X\n", $reg;
+            } else {
+                printf "Write request: reg=0x%04X value=%d (0x%04X)\n", $reg, $val, $val;
+                my $rsp = $self->f1200_request_status_raw();
+                if ($rsp) {
+                    my $d = $self->decode_f1200_payload($rsp->{value});
+                    if (($d->{message_type} // '') eq 'write-single-register') {
+                        printf "Write ack:     reg=0x%04X value=%d (0x%04X)\n",
+                            $d->{register}, $d->{value}, $d->{value};
+                    } else {
+                        print "Write ack:     unexpected frame type, decoded below\n";
+                        $self->print_f1200_decoded($rsp->{value});
+                    }
+                } else {
+                    print "Write ack:     no immediate notification (write may still have applied)\n";
+                }
+            }
+        }
+    }
+
+    if ($todo{f1200_set_writes} && @{$todo{f1200_set_writes}}) {
+        my $ok = $self->f1200_enable_notifications();
+        if (!$ok) {
+            print STDERR "ERROR: F1200 set-* setup failed (CCCD write)\n";
+        } else {
+            for my $w (@{$todo{f1200_set_writes}}) {
+                my $key = $w->{key};
+                my $reg = $w->{reg};
+                my $val = $w->{value};
+                my $sent = $self->f1200_send_write_single($reg, $val);
+                if (!$sent) {
+                    printf STDERR "ERROR: set-%s failed for reg 0x%04X\n", $key, $reg;
+                    next;
+                }
+
+                printf "Set %-22s -> reg=0x%04X value=%d (0x%04X)\n", $key, $reg, $val, $val;
+                my $rsp = $self->f1200_request_status_raw();
+                if ($rsp) {
+                    my $d = $self->decode_f1200_payload($rsp->{value});
+                    if (($d->{message_type} // '') eq 'write-single-register') {
+                        printf "Ack %-22s -> reg=0x%04X value=%d (0x%04X)\n",
+                            $key, $d->{register}, $d->{value}, $d->{value};
+                    } else {
+                        printf "Ack %-22s -> unexpected frame type\n", $key;
+                        $self->print_f1200_decoded($rsp->{value});
+                    }
+                } else {
+                    printf "Ack %-22s -> no immediate notification\n", $key;
+                }
+                select(undef, undef, undef, 0.05);
             }
         }
     }
@@ -749,6 +903,18 @@ sub f1200_send_read {
     # Build a Modbus read-registers request for arbitrary range.
     my @frame = (0x11, $func, ($start >> 8) & 0xFF, $start & 0xFF,
                              ($count >> 8) & 0xFF, $count & 0xFF);
+    my $crc = modbus_crc16(\@frame);
+    push @frame, ($crc >> 8) & 0xFF, $crc & 0xFF;  # high byte first, matching device byte order
+    return $self->att_write_req_handle(F1200_WRITE_HANDLE, @frame);
+}
+
+sub f1200_send_write_single {
+    my ($self, $reg, $value) = @_;
+    return 0 unless defined $reg && defined $value;
+    return 0 if $reg < 0 || $reg > 0xFFFF || $value < 0 || $value > 0xFFFF;
+
+    my @frame = (0x11, 0x06, ($reg >> 8) & 0xFF, $reg & 0xFF,
+                           ($value >> 8) & 0xFF, $value & 0xFF);
     my $crc = modbus_crc16(\@frame);
     push @frame, ($crc >> 8) & 0xFF, $crc & 0xFF;  # high byte first, matching device byte order
     return $self->att_write_req_handle(F1200_WRITE_HANDLE, @frame);
@@ -1392,6 +1558,43 @@ sub hex_bytes {
 
 package main;
 
+sub parse_u16 {
+    my ($s) = @_;
+    return undef unless defined $s;
+    $s =~ s/^\s+|\s+$//g;
+    my $n;
+    if ($s =~ /^0x([0-9A-Fa-f]{1,4})$/) {
+        $n = hex($1);
+    } elsif ($s =~ /^(\d{1,5})$/) {
+        $n = int($1);
+    } else {
+        return undef;
+    }
+    return ($n >= 0 && $n <= 0xFFFF) ? $n : undef;
+}
+
+sub parse_on_off {
+    my ($s) = @_;
+    return undef unless defined $s;
+    $s =~ s/^\s+|\s+$//g;
+    my $v = lc($s);
+    return 1 if $v eq '1' || $v eq 'on' || $v eq 'true' || $v eq 'yes';
+    return 0 if $v eq '0' || $v eq 'off' || $v eq 'false' || $v eq 'no';
+    return undef;
+}
+
+sub parse_led_mode {
+    my ($s) = @_;
+    return undef unless defined $s;
+    $s =~ s/^\s+|\s+$//g;
+    my $v = lc($s);
+    return 0 if $v eq '0' || $v eq 'off';
+    return 1 if $v eq '1' || $v eq 'on' || $v eq 'solid';
+    return 2 if $v eq '2' || $v eq 'sos';
+    return 3 if $v eq '3' || $v eq 'flash' || $v eq 'flashing';
+    return undef;
+}
+
 sub parse_handle {
     my ($s) = @_;
     return undef unless defined $s;
@@ -1456,6 +1659,18 @@ Actions (defaults to --info):
     --f1200-diff    Show only changed Modbus registers over time (0 listen-sec = indefinite)
     --f1200-query [REG[-REG]]  Read specific register(s) once and print with labels
                     REG is hex (0x0003) or decimal. Defaults to full 0x0000-0x004F range.
+    --set-usb-output=on|off
+    --set-dc-output=on|off
+    --set-ac-output=on|off
+    --set-led-mode=off|on|sos|flash
+    --set-key-sound=on|off
+    --set-ac-silent-charging=on|off
+    --set-screen-timeout=SEC
+    --set-usb-standby-min=MIN
+    --set-ac-standby-min=MIN
+    --set-dc-standby-min=MIN
+    --set-stop-charge-after-min=MIN
+    --f1200-write REG=VALUE    (legacy) direct register write
     --f1200-raw     With F1200 poll/stream, also print raw hex notification
   --info          Connect + name + services summary
 
@@ -1487,6 +1702,9 @@ Examples:
     $0 -d AA:BB:CC:DD:EE:FF --f1200-stream --listen-sec 30
     $0 -d AA:BB:CC:DD:EE:FF --f1200-diff --listen-sec 60 --f1200-interval-ms 1000
     $0 -d AA:BB:CC:DD:EE:FF --f1200-diff --f1200-diff-csv f1200-diff.csv
+        $0 -d AA:BB:CC:DD:EE:FF --set-screen-timeout=180
+        $0 -d AA:BB:CC:DD:EE:FF --set-ac-output=on --set-key-sound=off
+        $0 -d AA:BB:CC:DD:EE:FF --f1200-write 0x003E=180
   $0 -d AA:BB:CC:DD:EE:FF --info -v
 EOF
 }
