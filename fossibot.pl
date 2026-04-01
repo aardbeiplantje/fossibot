@@ -1040,14 +1040,16 @@ sub f1200_register_pretty {
             return sprintf('USB no-load standby time (est): %d min (raw=%d)', $value, $value);
         }
         if ($reg == 0x003C) {
+            return sprintf('AC no-load standby: never (raw=%d)', $value) if $value == 0;
             my $hours = int($value / 60);
             my $mins = $value % 60;
-            return sprintf('AC no-load standby (est): %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
+            return sprintf('AC no-load standby: %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
         }
         if ($reg == 0x003D) {
+            return sprintf('DC no-load standby: never (raw=%d)', $value) if $value == 0;
             my $hours = int($value / 60);
             my $mins = $value % 60;
-            return sprintf('DC no-load standby (est): %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
+            return sprintf('DC no-load standby: %dh %02dm (%d min, raw=%d)', $hours, $mins, $value, $value);
         }
         if ($reg == 0x000C) {
             return sprintf('Energy mgmt discharge limit (est): %d %% (raw=%d)', $value, $value);
