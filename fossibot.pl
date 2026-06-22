@@ -604,7 +604,226 @@ sub run {
                                 if ($csvfh) {
                                     printf $csvfh "%d,0x%04X,%04X,%04X,%d,%d\n",
                                         $ts, $c->{reg}, $c->{old}, $c->{new}, $c->{old}, $c->{new};
-                                }
+}
+ 
+=head1 NAME
+ 
+fossibot.pl - BLE connector/inspector for Fossibot F1200
+ 
+=head1 SYNOPSIS
+ 
+  fossibot.pl -d AA:BB:CC:DD:EE:FF [actions] [options]
+ 
+=head1 DESCRIPTION
+ 
+This script is intentionally lightweight: it establishes a BLE ATT/L2CAP
+connection to the Fossibot F1200 portable power station battery and can print 
+basic device details, GATT primary services, and communicate with the device 
+using the Modbus-RTU-over-BLE protocol.
+ 
+=head1 ACTIONS
+ 
+Default action is C<--info> if no other action is specified.
+ 
+=over 4
+ 
+=item B<--connect>
+ 
+Connect test only.
+ 
+=item B<--name>
+ 
+Read BLE Device Name (GATT 0x2A00).
+ 
+=item B<--services>
+ 
+Enumerate GATT primary services.
+ 
+=item B<--chars>
+ 
+Enumerate characteristics (all services or with C<--service-uuid>).
+ 
+=item B<--read-handle> I<H>
+ 
+Read a value from attribute handle I<H>.
+ 
+=item B<--write-req-handle> I<H> B<--write-hex> I<BYTES>
+ 
+Write with ATT Write Request to handle I<H>.
+ 
+=item B<--write-cmd-handle> I<H> B<--write-hex> I<BYTES>
+ 
+Write with ATT Write Command to handle I<H>.
+ 
+=item B<--subscribe-handle> I<H>
+ 
+Enable notify on handle I<H> by writing 0x0001 to I<H>+1 (CCCD).
+ 
+=item B<--listen>
+ 
+Print notifications for C<--listen-sec> seconds (0 = indefinite).
+ 
+=item B<--notify-handle> I<H>
+ 
+Filter C<--listen> to notifications from handle I<H>.
+ 
+=item B<--f1200-poll>
+ 
+Capture-based F1200 status poll (0 listen-sec = poll indefinitely).
+ 
+=item B<--f1200-stream>
+ 
+Repeated F1200 status polling + notifications for C<--listen-sec> (0 = indefinite).
+ 
+=item B<--f1200-diff>
+ 
+Show only changed Modbus registers over time (0 listen-sec = indefinite).
+ 
+=item B<--f1200-query> [I<REG[-REG]>]
+ 
+Read specific register(s) once and print with labels.
+ 
+REG is hex (0x0003) or decimal. Defaults to full 0x0000-0x004F range.
+ 
+=item B<--set-usb-output>=I<on|off>
+ 
+Set USB output state.
+ 
+=item B<--set-dc-output>=I<on|off>
+ 
+Set DC output state.
+ 
+=item B<--set-ac-output>=I<on|off>
+ 
+Set AC output state.
+ 
+=item B<--set-led-mode>=I<off|on|sos|flash>
+ 
+Set LED mode.
+ 
+=item B<--set-key-sound>=I<on|off>
+ 
+Set key sound state.
+ 
+=item B<--set-ac-silent-charging>=I<on|off>
+ 
+Set AC silent charging state.
+ 
+=item B<--set-screen-timeout>=I<SEC>
+ 
+Set screen timeout in seconds.
+ 
+=item B<--set-usb-standby-min>=I<MIN>
+ 
+Set USB standby time in minutes.
+ 
+=item B<--set-ac-standby-min>=I<MIN>
+ 
+Set AC standby time in minutes.
+ 
+=item B<--set-dc-standby-min>=I<MIN>
+ 
+Set DC standby time in minutes.
+ 
+=item B<--set-stop-charge-after-min>=I<MIN>
+ 
+Set stop charging after time in minutes.
+ 
+=item B<--f1200-write> I<REG>=I<VALUE>
+ 
+(legacy) direct register write.
+ 
+=item B<--f1200-raw>
+ 
+With F1200 poll/stream, also print raw hex notification.
+ 
+=item B<--info>
+ 
+Connect + name + services summary (default action).
+ 
+=back
+ 
+=head1 OPTIONS
+ 
+=over 4
+ 
+=item B<-d>, B<--device> I<ADDR>
+ 
+BLE MAC address of the F1200 (required).
+ 
+=item B<--addr-type> I<TYPE>
+ 
+public|random (default: public)
+ 
+=item B<--connect-timeout> I<SEC>
+ 
+Connect timeout in seconds (default: 6)
+ 
+=item B<--mtu> I<N>
+ 
+ATT MTU request size (23..517, default: 160)
+ 
+=item B<--service-uuid> I<UUID>
+ 
+Filter B<--chars> to one service UUID
+ 
+=item B<--response-timeout-ms> I<N>
+ 
+Timeout for ATT req/rsp operations (default: 2500)
+ 
+=item B<--listen-sec> I<SEC>
+ 
+Notification listen duration (default: 10, 0 = indefinite)
+ 
+=item B<--f1200-interval-ms> I<N>
+ 
+Poll interval for B<--f1200-diff> (default: 1000)
+ 
+=item B<--f1200-diff-csv> I<PATH>
+ 
+Write changed-register events to CSV
+ 
+=item B<--write-hex> I<BYTES>
+ 
+Hex bytes e.g. "AA BB 01 02" or "AABB0102"
+ 
+=item B<-v>, B<--debug>
+ 
+Verbose output
+ 
+=item B<-h>, B<--help>
+ 
+Show this help
+ 
+=back
+ 
+=head1 EXAMPLES
+ 
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --connect
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --name
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --services
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --chars --service-uuid fff0
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --read-handle 0x0025
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --write-req-handle 0x0028 --write-hex "01 00"
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --subscribe-handle 0x0028 --listen --listen-sec 20
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-poll
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-stream --listen-sec 30
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-diff --listen-sec 60 --f1200-interval-ms 1000
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-diff --f1200-diff-csv f1200-diff.csv
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --set-screen-timeout=180
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --set-ac-output=on --set-key-sound=off
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-write 0x003E=180
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --info -v
+ 
+=head1 AUTHOR
+ 
+Fossibot Analysis & Verification Agent
+ 
+=head1 SEE ALSO
+ 
+L<Fossibot::F1200>
+ 
+=cut
                             }
                         }
                     }
