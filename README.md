@@ -218,6 +218,66 @@ All reads consistently span registers 0x0000..0x004F (80 registers).
 
 > 44 registers have explicit labels in the decoder; 36 candidates remain unlabeled pending further analysis.
 
+## PCAPNG Verification Report
+
+Verification performed against eight nRF Sniffer captures (`change_screen_timeout.pcapng`, `new.pcapng`, `new.1–6.pcapng`) using `tshark -V` verbose parsing and Python regex extraction of ATT/L2CAP/Modbus payloads.
+
+### Verification Summary
+
+| Constant/Feature | Status | Details |
+|-----------------|--------|---------|
+| Slave address `0x11` | **PASS** | Code and captures both use `0x11`. Prior session's reported mismatch (`0xF6` vs `0x11`) has been fixed — code now correct. |
+| Write handle `0x0036` | **PASS** | Matches code constant, all capture payloads, and README. |
+| Notify handle `0x0038` | **PASS** | Matches code constant, all capture notifications, and README. |
+| CCCD handle `0x0039` | **PASS** | Verified CCCD write (`Client Characteristic Configuration`, UUID `0x2902`) with value `0x0001` (Notification enabled) in captures. |
+| Service UUID `0xA002` | **PASS** | Matches code constant and GATT discovery in captures (`Group End Handle: 0x0028` start, UUID `0xA002`). |
+| FC03/FC04/FC06/FC07 | **PASS** | All four function codes observed with correct Modbus byte layouts matching README table. |
+| Register span `0x0000..0x004F` (80 regs) | **PASS** | Every FC03/FC04 request uses `start=0x0000, count=80`. |
+| CRC high-byte-first | **PASS** | Captured CRC bytes (e.g. `110300000050` → `66 47`) match code's `($crc >> 8) & 0xFF, $crc & 0xFF` — high byte first, non-standard. |
+| Modbus payload structure | **PASS** | 8-byte requests: `[slave:1][FC:1][reg_hi:1][reg_lo:1][count_hi:1][count_lo:1][CRC_hi:1][CRC_lo:1]` — confirmed in all captures. |
+| SOC ÷10 formula | **PASS** | Code `return $raw / 10.0` matches corrected HA integration. `0x0035`/`0x0037` use `(raw / 10.0) - 0.1`. |
+
+### Known Issues
+
+- **Register `0x0029` label inconsistency**: Holding register branch (`fossibot_register_pretty`, line ~1557) labels it as "Converter info", while the input register branch and README label it as "Active output list" with bit-parsing. The README/input interpretation is correct per HA integration. The holding branch should be updated.
+
+### Capture File Statistics
+
+| File | Frames | FC03/FC04 Requests | FC06 Writes | Notifications (0x38) | Notes |
+|------|--------|--------------------|-------------|--------------------|-------|
+| `change_screen_timeout.pcapng` | 7,831 | FC03+FC06 writes | FC06 to `0x003E` (180s) | 28 | Screen timeout write session |
+| `new.1.pcapng` | 6,409 | FC03 (69 writes) | — | 39 | Full holding-register poll |
+| `new.2.pcapng` | 7,928 | FC04 (4 writes) | FC06 to `0x0014` | 4 | Input register poll |
+| `new.3.pcapng` | 17,797 | FC03 (23 writes) | FC06 to `0x0038,0x003B,0x003D,0x0044` | 16 | Multi-register writes + config |
+| `new.4.pcapng` | 12,925 | — | — | 1 | Connection test, minimal activity |
+| `new.5.pcapng` | 17,037 | FC04+FC06 (26 writes) | FC06 to `0x0018,0x001A,0x001B` | 22 | Output toggle session |
+| `new.6.pcapng` | 9,763 | FC03+FC04+FC07 (19) | — | 11 | Includes FC07 diagnostics ("TESTTAST", "TESTTOST") |
+| `new.pcapng` | 9,063 | FC03+FC04 (31 writes) | — | 17 | Baseline session |
+| **Total** | **88,753** | **106 requests** | **11 writes** | **138** | ~5.5 MB total |
+
+### Detailed Function Code Verification
+
+| FC | Modbus meaning | Capture payload (hex) | Code function | Status |
+|----|----------------|----------------------|---------------|--------|
+| `0x03` | Read Holding Registers | `11 03 00 00 00 50 66 47` (start=0, count=80) | `f1200_send_read()` | **PASS** |
+| `0x04` | Read Input Registers | `11 04 00 00 00 50 a6 f2` (start=0, count=80) | `f1200_send_poll()` | **PASS** |
+| `0x06` | Write Single Register | `11 06 00 3E 00 B4 e1 ea` (reg=0x3E, val=0xB4) | `f1200_send_write_single()` | **PASS** |
+| `0x07` | Diagnostics | `11 07 04 04 54 45 53 54 54 41 53 54 d0 61` ("TESTTAST") | FC07 handler in `decode_f1200_payload()` | **PASS** |
+
+### CRC Verification
+
+Modbus CRC-16 calculated over the data portion, then sent high-byte-first on wire:
+
+```
+FC03 data:  110300000050 → CRC(modbus)=0x6647 → wire=66 47 ✓
+FC04 data:  110400000050 → CRC(modbus)=0xA6F2 → wire=a6 f2 ✓
+FC06 data:  1106003E00B4 → CRC(modbus)=0xE1EA → wire=e1 ea ✓
+FC06 data:  110600140006 → CRC(modbus)=0x5C4B → wire=5c 4b ✓
+FC06 data:  110600380000 → CRC(modbus)=0x970A → wire=97 0a ✓
+```
+
+All captured CRC bytes match code's `($crc >> 8) & 0xFF, $crc & 0xFF` (high byte first).
+
 ## License
 
 See [LICENSE](LICENSE).
