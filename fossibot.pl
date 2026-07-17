@@ -315,7 +315,7 @@ sub run {
     my ($self, %todo) = @_;
 
     print "Fossibot F1200/F2400 BLE Tool\n";
-    print "=======================\n\n";
+    print "=============================\n\n";
     print "Device: $self->{device}\n";
 
     unless ($self->ble_connect()) {
