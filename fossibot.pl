@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# fossibot.pl - BLE connector/inspector for Fossibot F1200
+# fossibot.pl - BLE connector/inspector for Fossibot F1200/F2400
 #
 # This script is intentionally lightweight: it establishes a BLE ATT/L2CAP
 # connection to the battery and can print basic device details and GATT
@@ -50,36 +50,36 @@ GetOptions(
     'mtu=i'             => \$opts{mtu},
     'response-timeout-ms=i' => \$opts{response_timeout_ms},
     'listen-sec=f'      => \$opts{listen_sec},
-    'f1200-interval-ms=i' => \$opts{f1200_interval_ms},
+    'interval-ms=i'     => \$opts{f1200_interval_ms},
     'connect'           => \$do_connect,
     'name'              => \$do_name,
     'services'          => \$do_services,
     'chars'             => \$do_chars,
     'service-uuid=s'    => \$service_uuid,
     'read-handle=s'     => \$read_handle,
-    'write-req-handle=s' => \$write_req_handle,
-    'write-cmd-handle=s' => \$write_cmd_handle,
+    'write-req-handle=s'=> \$write_req_handle,
+    'write-cmd-handle=s'=> \$write_cmd_handle,
     'write-hex=s'       => \$write_hex,
-    'subscribe-handle=s' => \$subscribe_handle,
+    'subscribe-handle=s'=> \$subscribe_handle,
     'notify-handle=s'   => \$notify_handle,
     'listen'            => \$do_listen,
-    'f1200-poll'        => \$do_f1200_poll,
-    'f1200-stream'      => \$do_f1200_stream,
-    'f1200-diff'        => \$do_f1200_diff,
-    'f1200-raw'         => \$f1200_raw,
-    'f1200-diff-csv=s'  => \$f1200_diff_csv,
-    'f1200-query:s'     => \$f1200_query,
-    'f1200-write=s'     => \$f1200_write,
+    'poll'              => \$do_f1200_poll,
+    'stream'            => \$do_f1200_stream,
+    'diff'              => \$do_f1200_diff,
+    'raw'               => \$f1200_raw,
+    'diff-csv=s'        => \$f1200_diff_csv,
+    'query:s'           => \$f1200_query,
+    'write=s'           => \$f1200_write,
     'set-usb-output=s'  => \$set_usb_output,
     'set-dc-output=s'   => \$set_dc_output,
     'set-ac-output=s'   => \$set_ac_output,
     'set-led-mode=s'    => \$set_led_mode,
     'set-key-sound=s'   => \$set_key_sound,
     'set-ac-silent-charging=s' => \$set_ac_silent_charging,
-    'set-screen-timeout=i' => \$set_screen_timeout,
-    'set-usb-standby-min=i' => \$set_usb_standby_min,
-    'set-ac-standby-min=i' => \$set_ac_standby_min,
-    'set-dc-standby-min=i' => \$set_dc_standby_min,
+    'set-screen-timeout=i'     => \$set_screen_timeout,
+    'set-usb-standby-min=i'    => \$set_usb_standby_min,
+    'set-ac-standby-min=i'     => \$set_ac_standby_min,
+    'set-dc-standby-min=i'     => \$set_dc_standby_min,
     'set-stop-charge-after-min=i' => \$set_stop_charge_after_min,
     'info'              => \$do_info,
     'debug|v+'          => \$opts{debug},
@@ -112,7 +112,7 @@ if ($opts{listen_sec} < 0 || $opts{listen_sec} > 3600) {
     exit 1;
 }
 if (defined($opts{f1200_interval_ms}) && ($opts{f1200_interval_ms} < 100 || $opts{f1200_interval_ms} > 10000)) {
-    print STDERR "Error: --f1200-interval-ms must be in 100..10000\n";
+    print STDERR "Error: --interval-ms must be in 100..10000\n";
     exit 1;
 }
 
@@ -153,8 +153,8 @@ if (defined $f1200_write) {
         $f1200_write_val = parse_u16($2);
     }
     if (!defined($f1200_write_reg) || !defined($f1200_write_val)) {
-        print STDERR "Error: --f1200-write must be REG=VALUE using hex or decimal, each in 0..65535\n";
-        print STDERR "       Example: --f1200-write 0x003E=180\n";
+        print STDERR "Error: --write must be REG=VALUE using hex or decimal, each in 0..65535\n";
+        print STDERR "       Example: --write 0x003E=180\n";
         exit 1;
     }
 }
@@ -226,8 +226,8 @@ if (!$do_connect && !$do_name && !$do_services && !$do_info && !$do_chars && !$d
     $do_info = 1;
 }
 
-my $f1200 = Fossibot::F1200->new(%opts);
-exit $f1200->run(
+my $fb = Fossibot->new(%opts);
+my $ec = $fb->run(
     connect  => $do_connect,
     name     => $do_name,
     services => $do_services,
@@ -251,12 +251,13 @@ exit $f1200->run(
     f1200_set_writes => \@f1200_set_writes,
     info     => $do_info,
 );
+exit $ec;
 
 # ============================================================================
-# Fossibot::F1200 class
+# Fossibot class F1200/F2400
 # ============================================================================
 
-package Fossibot::F1200;
+package Fossibot;
 
 use Errno  qw(EAGAIN EINPROGRESS);
 use Fcntl  qw(O_NONBLOCK F_SETFL F_GETFL);
@@ -286,11 +287,11 @@ use constant {
     GATT_CHARACTERISTIC     => 0x2803,
     GATT_DEVICE_NAME        => 0x2A00,
 
-    # Inferred from provided F1200 capture
-    F1200_SERVICE_UUID      => 0xA002,
-    F1200_WRITE_HANDLE      => 0x0036,
-    F1200_NOTIFY_HANDLE     => 0x0038,
-    F1200_CCCD_HANDLE       => 0x0039,
+    # Inferred from provided F1200/F2400 capture
+    SERVICE_UUID            => 0xA002,
+    WRITE_HANDLE            => 0x0036,
+    NOTIFY_HANDLE           => 0x0038,
+    CCCD_HANDLE             => 0x0039,
 };
 
 sub new {
@@ -313,7 +314,7 @@ sub new {
 sub run {
     my ($self, %todo) = @_;
 
-    print "Fossibot F1200 BLE Tool\n";
+    print "Fossibot F1200/F2400 BLE Tool\n";
     print "=======================\n\n";
     print "Device: $self->{device}\n";
 
@@ -418,16 +419,16 @@ sub run {
         }
         my $count = $end_reg - $start + 1;
         if ($count < 1 || $count > 125) {
-            print STDERR "ERROR: --f1200-query range must be 1..125 registers\n";
+            print STDERR "ERROR: --query range must be 1..125 registers\n";
         } else {
             my $ok = $self->f1200_enable_notifications();
             if (!$ok) {
-                print STDERR "ERROR: F1200 query setup failed (CCCD write)\n";
+                print STDERR "ERROR: query setup failed (CCCD write)\n";
             } else {
                 # Query holding registers (FC03). Device settings like screen timeout are exposed here.
                 my $sent = $self->f1200_send_read($start, $count, 0x03);
                 if (!$sent) {
-                    print STDERR "ERROR: F1200 query request write failed\n";
+                    print STDERR "ERROR: query request write failed\n";
                 } else {
                     my $rsp = $self->f1200_request_status_raw();
                     if ($rsp) {
@@ -445,7 +446,7 @@ sub run {
                             print STDERR "ERROR: could not parse query response\n";
                         }
                     } else {
-                        print STDERR "ERROR: F1200 query timed out\n";
+                        print STDERR "ERROR: query timed out\n";
                     }
                 }
             }
@@ -457,11 +458,11 @@ sub run {
         my $val = $todo{f1200_write_val};
         my $ok = $self->f1200_enable_notifications();
         if (!$ok) {
-            print STDERR "ERROR: F1200 write setup failed (CCCD write)\n";
+            print STDERR "ERROR: write setup failed (CCCD write)\n";
         } else {
             my $sent = $self->f1200_send_write_single($reg, $val);
             if (!$sent) {
-                printf STDERR "ERROR: F1200 write failed for reg 0x%04X\n", $reg;
+                printf STDERR "ERROR: write failed for reg 0x%04X\n", $reg;
             } else {
                 printf "Write request: reg=0x%04X value=%d (0x%04X)\n", $reg, $val, $val;
                 my $rsp = $self->f1200_request_status_raw();
@@ -484,7 +485,7 @@ sub run {
     if ($todo{f1200_set_writes} && @{$todo{f1200_set_writes}}) {
         my $ok = $self->f1200_enable_notifications();
         if (!$ok) {
-            print STDERR "ERROR: F1200 set-* setup failed (CCCD write)\n";
+            print STDERR "ERROR: set-* setup failed (CCCD write)\n";
         } else {
             for my $w (@{$todo{f1200_set_writes}}) {
                 my $key = $w->{key};
@@ -518,15 +519,15 @@ sub run {
     if ($todo{f1200_poll}) {
         my $ok = $self->f1200_enable_notifications();
         if (!$ok) {
-            print STDERR "ERROR: F1200 poll setup failed (CCCD write)\n";
+            print STDERR "ERROR: poll setup failed (CCCD write)\n";
         } else {
             my $run_forever = $self->{listen_sec} == 0;
             my $end = $run_forever ? undef : (time() + $self->{listen_sec});
-            print "F1200 poll:   running indefinitely (Ctrl+C to stop)\n" if $run_forever;
+            print "poll:   running indefinitely (Ctrl+C to stop)\n" if $run_forever;
             while ($run_forever || time() < $end) {
                 my $rsp = $self->f1200_request_status();
                 if ($rsp) {
-                    printf "F1200 poll rsp (0x%04X)\n", $rsp->{handle};
+                    printf "poll rsp (0x%04X)\n", $rsp->{handle};
                     if (defined $rsp->{expected_len} && !$rsp->{complete}) {
                         printf "Note:         partial frame (%d/%d bytes), waiting window may be too short\n",
                             scalar(@{$rsp->{value}}), $rsp->{expected_len};
@@ -534,7 +535,7 @@ sub run {
                     $self->print_f1200_decoded($rsp->{value});
                     printf "Raw:          %s\n", hex_bytes($rsp->{value}) if $self->{f1200_raw};
                 } else {
-                    print STDERR "ERROR: F1200 poll timed out waiting for notification\n";
+                    print STDERR "ERROR: poll timed out waiting for notification\n";
                 }
                 last unless $run_forever;
                 select(undef, undef, undef, $self->{f1200_interval_sec});
@@ -545,16 +546,16 @@ sub run {
     if ($todo{f1200_stream}) {
         my $ok = $self->f1200_enable_notifications();
         if (!$ok) {
-            print STDERR "ERROR: F1200 stream setup failed (CCCD write)\n";
+            print STDERR "ERROR: stream setup failed (CCCD write)\n";
         } else {
             my $run_forever = $self->{listen_sec} == 0;
             my $end = $run_forever ? undef : (time() + $self->{listen_sec});
-            print "F1200 stream: polling and waiting for notifications\n";
-            print "F1200 stream: running indefinitely (Ctrl+C to stop)\n" if $run_forever;
+            print "stream: polling and waiting for notifications\n";
+            print "stream: running indefinitely (Ctrl+C to stop)\n" if $run_forever;
             while ($run_forever || time() < $end) {
                 my $rsp = $self->f1200_request_status();
                 if ($rsp) {
-                    printf "F1200 notify (0x%04X)\n", $rsp->{handle};
+                    printf "notify (0x%04X)\n", $rsp->{handle};
                     if (defined $rsp->{expected_len} && !$rsp->{complete}) {
                         printf "Note:         partial frame (%d/%d bytes)\n",
                             scalar(@{$rsp->{value}}), $rsp->{expected_len};
@@ -570,7 +571,7 @@ sub run {
     if ($todo{f1200_diff}) {
         my $ok = $self->f1200_enable_notifications();
         if (!$ok) {
-            print STDERR "ERROR: F1200 diff setup failed (CCCD write)\n";
+            print STDERR "ERROR: diff setup failed (CCCD write)\n";
         } else {
             my $csvfh;
             if (defined $self->{f1200_diff_csv} && length $self->{f1200_diff_csv}) {
@@ -585,8 +586,8 @@ sub run {
             my $run_forever = $self->{listen_sec} == 0;
             my $end = $run_forever ? undef : (time() + $self->{listen_sec});
             my $prev;
-            print "F1200 diff:   tracking changed registers\n";
-            print "F1200 diff:   running indefinitely (Ctrl+C to stop)\n" if $run_forever;
+            print "diff:   tracking changed registers\n";
+            print "diff:   running indefinitely (Ctrl+C to stop)\n" if $run_forever;
             while ($run_forever || time() < $end) {
                 my $rsp = $self->f1200_request_status();
                 if ($rsp) {
@@ -608,7 +609,7 @@ sub run {
  
 =head1 NAME
  
-fossibot.pl - BLE connector/inspector for Fossibot F1200
+fossibot.pl - BLE connector/inspector for Fossibot F1200/F2400
  
 =head1 SYNOPSIS
  
@@ -617,9 +618,9 @@ fossibot.pl - BLE connector/inspector for Fossibot F1200
 =head1 DESCRIPTION
  
 This script is intentionally lightweight: it establishes a BLE ATT/L2CAP
-connection to the Fossibot F1200 portable power station battery and can print 
-basic device details, GATT primary services, and communicate with the device 
-using the Modbus-RTU-over-BLE protocol.
+connection to the Fossibot F1200/F2400 portable power station battery and can
+print basic device details, GATT primary services, and communicate with the
+device using the Modbus-RTU-over-BLE protocol.
  
 =head1 ACTIONS
  
@@ -667,19 +668,19 @@ Print notifications for C<--listen-sec> seconds (0 = indefinite).
  
 Filter C<--listen> to notifications from handle I<H>.
  
-=item B<--f1200-poll>
+=item B<--poll>
  
-Capture-based F1200 status poll (0 listen-sec = poll indefinitely).
+Capture-based status poll (0 listen-sec = poll indefinitely).
  
-=item B<--f1200-stream>
+=item B<--stream>
  
-Repeated F1200 status polling + notifications for C<--listen-sec> (0 = indefinite).
+Repeated status polling + notifications for C<--listen-sec> (0 = indefinite).
  
-=item B<--f1200-diff>
+=item B<--diff>
  
 Show only changed Modbus registers over time (0 listen-sec = indefinite).
  
-=item B<--f1200-query> [I<REG[-REG]>]
+=item B<--query> [I<REG[-REG]>]
  
 Read specific register(s) once and print with labels.
  
@@ -729,13 +730,13 @@ Set DC standby time in minutes.
  
 Set stop charging after time in minutes.
  
-=item B<--f1200-write> I<REG>=I<VALUE>
+=item B<--write> I<REG>=I<VALUE>
  
 (legacy) direct register write.
  
-=item B<--f1200-raw>
+=item B<--raw>
  
-With F1200 poll/stream, also print raw hex notification.
+With poll/stream, also print raw hex notification.
  
 =item B<--info>
  
@@ -749,7 +750,7 @@ Connect + name + services summary (default action).
  
 =item B<-d>, B<--device> I<ADDR>
  
-BLE MAC address of the F1200 (required).
+BLE MAC address of the (required).
  
 =item B<--addr-type> I<TYPE>
  
@@ -775,11 +776,11 @@ Timeout for ATT req/rsp operations (default: 2500)
  
 Notification listen duration (default: 10, 0 = indefinite)
  
-=item B<--f1200-interval-ms> I<N>
+=item B<--interval-ms> I<N>
  
-Poll interval for B<--f1200-diff> (default: 1000)
+Poll interval for B<--diff> (default: 1000)
  
-=item B<--f1200-diff-csv> I<PATH>
+=item B<--diff-csv> I<PATH>
  
 Write changed-register events to CSV
  
@@ -806,13 +807,13 @@ Show this help
   fossibot.pl -d AA:BB:CC:DD:EE:FF --read-handle 0x0025
   fossibot.pl -d AA:BB:CC:DD:EE:FF --write-req-handle 0x0028 --write-hex "01 00"
   fossibot.pl -d AA:BB:CC:DD:EE:FF --subscribe-handle 0x0028 --listen --listen-sec 20
-  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-poll
-  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-stream --listen-sec 30
-  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-diff --listen-sec 60 --f1200-interval-ms 1000
-  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-diff --f1200-diff-csv f1200-diff.csv
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --poll
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --stream --listen-sec 30
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --diff --listen-sec 60 --interval-ms 1000
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --diff --diff-csv diff.csv
   fossibot.pl -d AA:BB:CC:DD:EE:FF --set-screen-timeout=180
   fossibot.pl -d AA:BB:CC:DD:EE:FF --set-ac-output=on --set-key-sound=off
-  fossibot.pl -d AA:BB:CC:DD:EE:FF --f1200-write 0x003E=180
+  fossibot.pl -d AA:BB:CC:DD:EE:FF --write 0x003E=180
   fossibot.pl -d AA:BB:CC:DD:EE:FF --info -v
  
 =head1 AUTHOR
@@ -821,7 +822,7 @@ Fossibot Analysis & Verification Agent
  
 =head1 SEE ALSO
  
-L<Fossibot::F1200>
+L<Fossibot>
  
 =cut
                             }
@@ -1107,13 +1108,13 @@ sub listen_notifications {
 
 sub f1200_enable_notifications {
     my ($self) = @_;
-    return $self->att_write_req_handle(F1200_CCCD_HANDLE, 0x01, 0x00);
+    return $self->att_write_req_handle(CCCD_HANDLE, 0x01, 0x00);
 }
 
 sub f1200_send_poll {
     my ($self) = @_;
     # Seen repeatedly in capture as status request payload to handle 0x0036.
-    return $self->att_write_req_handle(F1200_WRITE_HANDLE, 0x11, 0x04, 0x00, 0x00, 0x00, 0x50, 0xA6, 0xF2);
+    return $self->att_write_req_handle(WRITE_HANDLE, 0x11, 0x04, 0x00, 0x00, 0x00, 0x50, 0xA6, 0xF2);
 }
 
 sub f1200_send_read {
@@ -1124,7 +1125,7 @@ sub f1200_send_read {
                              ($count >> 8) & 0xFF, $count & 0xFF);
     my $crc = modbus_crc16(\@frame);
     push @frame, ($crc >> 8) & 0xFF, $crc & 0xFF;  # high byte first, matching device byte order
-    return $self->att_write_req_handle(F1200_WRITE_HANDLE, @frame);
+    return $self->att_write_req_handle(WRITE_HANDLE, @frame);
 }
 
 sub f1200_send_write_single {
@@ -1136,7 +1137,7 @@ sub f1200_send_write_single {
                            ($value >> 8) & 0xFF, $value & 0xFF);
     my $crc = modbus_crc16(\@frame);
     push @frame, ($crc >> 8) & 0xFF, $crc & 0xFF;  # high byte first, matching device byte order
-    return $self->att_write_req_handle(F1200_WRITE_HANDLE, @frame);
+    return $self->att_write_req_handle(WRITE_HANDLE, @frame);
 }
 
 sub f1200_expected_frame_len {
@@ -1162,7 +1163,7 @@ sub f1200_expected_frame_len {
 sub f1200_request_status_raw {
     # Read and reassemble a notification response without sending the poll.
     my ($self) = @_;
-    my $first = $self->read_notification($self->{response_timeout}, F1200_NOTIFY_HANDLE);
+    my $first = $self->read_notification($self->{response_timeout}, NOTIFY_HANDLE);
     return undef unless $first;
 
     my @buf = @{$first->{value}};
@@ -1172,7 +1173,7 @@ sub f1200_request_status_raw {
     while (defined $expected && scalar(@buf) < $expected && time() < $deadline) {
         my $left = $deadline - time();
         last if $left <= 0;
-        my $next = $self->read_notification($left < 0.5 ? $left : 0.5, F1200_NOTIFY_HANDLE);
+        my $next = $self->read_notification($left < 0.5 ? $left : 0.5, NOTIFY_HANDLE);
         last unless $next;
         push @buf, @{$next->{value}};
     }
@@ -1189,7 +1190,7 @@ sub f1200_request_status {
     my ($self) = @_;
     return undef unless $self->f1200_send_poll();
 
-    my $first = $self->read_notification($self->{response_timeout}, F1200_NOTIFY_HANDLE);
+    my $first = $self->read_notification($self->{response_timeout}, NOTIFY_HANDLE);
     return undef unless $first;
 
     my @buf = @{$first->{value}};
@@ -1200,7 +1201,7 @@ sub f1200_request_status {
         my $left = $deadline - time();
         last if $left <= 0;
 
-        my $next = $self->read_notification($left < 0.5 ? $left : 0.5, F1200_NOTIFY_HANDLE);
+        my $next = $self->read_notification($left < 0.5 ? $left : 0.5, NOTIFY_HANDLE);
         last unless $next;
 
         push @buf, @{$next->{value}};
@@ -1884,49 +1885,51 @@ sub print_usage {
 Usage: $0 -d AA:BB:CC:DD:EE:FF [actions] [options]
 
 Actions (defaults to --info):
-  --connect       Connect test only
-  --name          Read BLE Device Name (GATT 0x2A00)
-  --services      Enumerate GATT primary services
-    --chars         Enumerate characteristics (all services or --service-uuid)
-    --read-handle H Read a value from attribute handle H
-    --write-req-handle H --write-hex BYTES  Write with ATT Write Request
-    --write-cmd-handle H --write-hex BYTES  Write with ATT Write Command
-    --subscribe-handle H    Enable notify on H by writing 0x0001 to H+1 (CCCD)
-    --listen        Print notifications for --listen-sec seconds (0 = indefinite)
-    --notify-handle H       Filter --listen to notifications from handle H
-    --f1200-poll    Capture-based F1200 status poll (0 listen-sec = poll indefinitely)
-    --f1200-stream  Repeated F1200 status polling + notifications for --listen-sec (0 = indefinite)
-    --f1200-diff    Show only changed Modbus registers over time (0 listen-sec = indefinite)
-    --f1200-query [REG[-REG]]  Read specific register(s) once and print with labels
-                    REG is hex (0x0003) or decimal. Defaults to full 0x0000-0x004F range.
-    --set-usb-output=on|off
-    --set-dc-output=on|off
-    --set-ac-output=on|off
-    --set-led-mode=off|on|sos|flash
-    --set-key-sound=on|off
-    --set-ac-silent-charging=on|off
-    --set-screen-timeout=SEC
-    --set-usb-standby-min=MIN
-    --set-ac-standby-min=MIN
-    --set-dc-standby-min=MIN
-    --set-stop-charge-after-min=MIN
-    --f1200-write REG=VALUE    (legacy) direct register write
-    --f1200-raw     With F1200 poll/stream, also print raw hex notification
-  --info          Connect + name + services summary
+  --connect                  Connect test only
+  --name                     Read BLE Device Name (GATT 0x2A00)
+  --services                 Enumerate GATT primary services
+  --chars                    Enumerate characteristics (all services or --service-uuid)
+  --read-handle H            Read a value from attribute handle H
+  --write-req-handle H --write-hex BYTES
+                             Write with ATT Write Request
+  --write-cmd-handle H --write-hex BYTES
+                             Write with ATT Write Command
+  --subscribe-handle H       Enable notify on H by writing 0x0001 to H+1 (CCCD)
+  --listen                   Print notifications for --listen-sec seconds (0 = indefinite)
+  --notify-handle H          Filter --listen to notifications from handle H
+  --poll                     Capture-based status poll (0 listen-sec = poll indefinitely)
+  --stream                   Repeated status polling + notifications for --listen-sec (0 = indefinite)
+  --diff                     Show only changed Modbus registers over time (0 listen-sec = indefinite)
+  --query [REG[-REG]]        Read specific register(s) once and print with labels
+                             REG is hex (0x0003) or decimal. Defaults to full 0x0000-0x004F range.
+  --set-usb-output=on|off
+  --set-dc-output=on|off
+  --set-ac-output=on|off
+  --set-led-mode=off|on|sos|flash
+  --set-key-sound=on|off
+  --set-ac-silent-charging=on|off
+  --set-screen-timeout=SEC
+  --set-usb-standby-min=MIN
+  --set-ac-standby-min=MIN
+  --set-dc-standby-min=MIN
+  --set-stop-charge-after-min=MIN
+  --write REG=VALUE          (legacy) direct register write
+  --raw                      With poll/stream, also print raw hex notification
+  --info                     Connect + name + services summary
 
 Required:
-  -d, --device ADDR       BLE MAC address of the F1200
+  -d, --device ADDR       BLE MAC address of the 
 
 Options:
   --addr-type TYPE        public|random (default: public)
   --connect-timeout SEC   Connect timeout in seconds (default: 6)
   --mtu N                 ATT MTU request size (23..517, default: 160)
-    --service-uuid UUID     Filter --chars to one service UUID
-    --response-timeout-ms N Timeout for ATT req/rsp operations (default: 2500)
-    --listen-sec SEC        Notification listen duration (default: 10, 0 = indefinite)
-    --f1200-interval-ms N   Poll interval for --f1200-diff (default: 1000)
-    --f1200-diff-csv PATH   Write changed-register events to CSV
-    --write-hex BYTES       Hex bytes e.g. "AA BB 01 02" or "AABB0102"
+  --service-uuid UUID     Filter --chars to one service UUID
+  --response-timeout-ms N Timeout for ATT req/rsp operations (default: 2500)
+  --listen-sec SEC        Notification listen duration (default: 10, 0 = indefinite)
+  --interval-ms N         Poll interval for --diff (default: 1000)
+  --diff-csv PATH         Write changed-register events to CSV
+  --write-hex BYTES       Hex bytes e.g. "AA BB 01 02" or "AABB0102"
   -v, --debug             Verbose output
   -h, --help              Show this help
 
@@ -1934,17 +1937,17 @@ Examples:
   $0 -d AA:BB:CC:DD:EE:FF --connect
   $0 -d AA:BB:CC:DD:EE:FF --name
   $0 -d AA:BB:CC:DD:EE:FF --services
-    $0 -d AA:BB:CC:DD:EE:FF --chars --service-uuid fff0
-    $0 -d AA:BB:CC:DD:EE:FF --read-handle 0x0025
-    $0 -d AA:BB:CC:DD:EE:FF --write-req-handle 0x0028 --write-hex "01 00"
-    $0 -d AA:BB:CC:DD:EE:FF --subscribe-handle 0x0028 --listen --listen-sec 20
-    $0 -d AA:BB:CC:DD:EE:FF --f1200-poll
-    $0 -d AA:BB:CC:DD:EE:FF --f1200-stream --listen-sec 30
-    $0 -d AA:BB:CC:DD:EE:FF --f1200-diff --listen-sec 60 --f1200-interval-ms 1000
-    $0 -d AA:BB:CC:DD:EE:FF --f1200-diff --f1200-diff-csv f1200-diff.csv
-        $0 -d AA:BB:CC:DD:EE:FF --set-screen-timeout=180
-        $0 -d AA:BB:CC:DD:EE:FF --set-ac-output=on --set-key-sound=off
-        $0 -d AA:BB:CC:DD:EE:FF --f1200-write 0x003E=180
+  $0 -d AA:BB:CC:DD:EE:FF --chars --service-uuid fff0
+  $0 -d AA:BB:CC:DD:EE:FF --read-handle 0x0025
+  $0 -d AA:BB:CC:DD:EE:FF --write-req-handle 0x0028 --write-hex "01 00"
+  $0 -d AA:BB:CC:DD:EE:FF --subscribe-handle 0x0028 --listen --listen-sec 20
+  $0 -d AA:BB:CC:DD:EE:FF --poll
+  $0 -d AA:BB:CC:DD:EE:FF --stream --listen-sec 30
+  $0 -d AA:BB:CC:DD:EE:FF --diff --listen-sec 60 --interval-ms 1000
+  $0 -d AA:BB:CC:DD:EE:FF --diff --diff-csv diff.csv
+  $0 -d AA:BB:CC:DD:EE:FF --set-screen-timeout=180
+  $0 -d AA:BB:CC:DD:EE:FF --set-ac-output=on --set-key-sound=off
+  $0 -d AA:BB:CC:DD:EE:FF --write 0x003E=180
   $0 -d AA:BB:CC:DD:EE:FF --info -v
 EOF
 }
